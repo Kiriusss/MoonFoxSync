@@ -1,0 +1,80 @@
+name: Verify Windows MSI
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release tag (for example v0.4.7)
+        required: true
+        type: string
+      sha256:
+        description: Expected SHA-256 of MoonFoxSync-Windows-x64.msi
+        required: true
+        type: string
+      previous_tag:
+        description: Published version to upgrade from
+        required: true
+        type: string
+        default: v0.4.6
+
+jobs:
+  native-installer:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      # GitHub only exposes draft releases to accounts with push access.
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CANDIDATE_TAG: ${{ inputs.tag }}
+      PREVIOUS_TAG: ${{ inputs.previous_tag }}
+      EXPECTED_SHA256: ${{ inputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download and identify the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          foreach ($tag in $env:CANDIDATE_TAG, $env:PREVIOUS_TAG) {
+            if ($tag -notmatch '^v\d+\.\d+\.\d+(?:-windows(?:\.\d+)?)?$') { throw "Unexpected release tag $tag" }
+          }
+          if ($env:EXPECTED_SHA256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'A complete SHA-256 is required' }
+          $file = 'MoonFoxSync-Windows-x64.msi'
+          foreach ($entry in @(
+            @{ Tag = $env:CANDIDATE_TAG; Draft = $true; Folder = 'candidate' }
+            @{ Tag = $env:PREVIOUS_TAG; Draft = $false; Folder = 'previous' }
+          )) {
+            $release = gh release view $entry.Tag --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,assets | ConvertFrom-Json
+            if ($release.tagName -cne $entry.Tag -or $release.isDraft -ne $entry.Draft) {
+              throw "Unexpected release state for $($entry.Tag)"
+            }
+            $asset = @($release.assets | Where-Object name -CEQ $file)
+            if ($asset.Count -ne 1) { throw "Expected one $file in $($entry.Tag)" }
+            $dir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP $entry.Folder)
+            gh release download $entry.Tag --repo $env:GITHUB_REPOSITORY --pattern $file --dir $dir.FullName
+            $digest = (Get-FileHash -LiteralPath (Join-Path $dir.FullName $file) -Algorithm SHA256).Hash
+            if ($entry.Draft -and $digest -ne $env:EXPECTED_SHA256) { throw 'Candidate SHA-256 mismatch' }
+            if ($asset[0].digest -and $asset[0].digest -ne "sha256:$digest") { throw 'GitHub asset digest mismatch' }
+            Write-Host "$($entry.Tag) $file SHA-256 $digest"
+          }
+      - name: Verify Windows Installer and the installed GUI
+        run: |
+          ./scripts/verify-windows-msi.ps1 -Candidate (Join-Path $env:RUNNER_TEMP 'candidate/MoonFoxSync-Windows-x64.msi') `
+            -Previous (Join-Path $env:RUNNER_TEMP 'previous/MoonFoxSync-Windows-x64.msi') `
+            -Version (($env:CANDIDATE_TAG -split '-')[0].Substring(1)) `
+            -PreviousVersion (($env:PREVIOUS_TAG -split '-')[0].Substring(1)) `
+            -LogDir (Join-Path $env:RUNNER_TEMP 'msi-verification')
+      - name: Save Windows Installer logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-logs
+          path: ${{ runner.temp }}/msi-verification/*.log
+          if-no-files-found: ignore
+          retention-days: 7
