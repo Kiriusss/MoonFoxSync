@@ -30,11 +30,11 @@ extension ReadingRoom {
                     Button("移除本机记录…", role: .destructive) { deletionTarget = .forget(unit, name) }
                 }
                 if nas {
-                    Button("从 NAS 删除…", role: .destructive) { deletionTarget = .delete(unit, name) }
+                    Button("从 NAS 删除…", role: .destructive) { deletionTarget = .delete(unit, name) }.disabled(model.busy)
                 }
             } label: { Image(systemName: "ellipsis.circle") }
             .fixedSize().menuStyle(.borderlessButton).help("资料库管理").accessibilityLabel("资料库管理 · " + name)
-            .disabled(model.busy)
+            .disabled(model.busy && !local)
         }
     }
 }

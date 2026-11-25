@@ -233,7 +233,7 @@ extension ReadingRoom {
                     }
                     Button("清除本机同步数据…", role: .destructive) { deletionTarget = .reset }
                 }
-            }.padding(15).deskCard().disabled(model.busy)
+            }.padding(15).deskCard()
             Text("NAS 连接").font(.system(size: 15,weight:.bold)).padding(.top,5)
             HStack {
                 settingText("梦枢天罗",model.connection.serverUrl ?? "尚未配对")
