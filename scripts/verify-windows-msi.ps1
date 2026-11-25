@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $installer = New-Object -ComObject WindowsInstaller.Installer
+$loginKey = 'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run'
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\Moon Fox Sync'
 $exe = Join-Path $installDir '心狐同步.exe'
 $payload = '心狐同步.exe', '心狐同步.exe.config', 'kdrive.exe', 'kdrive-agent.exe'
@@ -165,7 +166,7 @@ function Assert-Uninstalled($code) {
     foreach ($path in @($links) + @($payload | ForEach-Object { Join-Path $installDir $_ })) {
         if (Test-Path -LiteralPath $path) { throw "Uninstall retained $path" }
     }
-    $login = Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name XinhuSync -ErrorAction SilentlyContinue
+    $login = [Microsoft.Win32.Registry]::GetValue($loginKey, 'XinhuSync', $null)
     if ($login -like "*$exe*") { throw 'Uninstall retained the login entry for the removed executable' }
 }
 
@@ -217,8 +218,13 @@ Assert-Uninstalled $newCode
 
 Invoke-Msi '/i' $Previous '04-install-previous'
 Assert-Installed $oldCode $PreviousVersion
+$enabledLogin = '"' + $exe + '" --background'
+[Microsoft.Win32.Registry]::SetValue($loginKey, 'XinhuSync', $enabledLogin)
 Invoke-Msi '/i' $Candidate '05-upgrade'
 Assert-Installed $newCode $Version
+if ([Microsoft.Win32.Registry]::GetValue($loginKey, 'XinhuSync', $null) -ne $enabledLogin) {
+    throw 'Upgrade lost the existing enabled login command'
+}
 if ($installer.ProductState($oldCode) -ne -1) { throw "Upgrade retained the previous MSI registration $oldCode" }
 Test-Gui
 Invoke-Msi '/x' $newCode '06-upgrade-uninstall'
