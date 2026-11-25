@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="$(var.ProductId)" Name="Moon Fox Sync" Manufacturer="Moon Fox Sync"
+           Language="2052" Codepage="936" Version="$(var.ProductVersion)"
+           UpgradeCode="32E34D01-9EA5-4D9A-AD7C-40D0CA41EB9D">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" SummaryCodepage="936"/>
+    <Media Id="1" Cabinet="payload.cab" EmbedCab="yes"/>
+    <Icon Id="MoonFox.ico" SourceFile="xinhu.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="MoonFox.ico"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Kiriusss/MoonFoxSync"/>
+    <Property Id="NET48RELEASE">
+      <RegistrySearch Id="FindNet48" Root="HKLM" Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" Name="Release" Type="raw" Win64="yes"/>
+    </Property>
+    <Condition Message="Install .NET Framework 4.8 or later before installing Moon Fox Sync.">Installed OR NET48RELEASE &gt;= "#528040"</Condition>
+    <Property Id="MOONFOXLOGIN">
+      <RegistrySearch Id="FindLoginCommand" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="XinhuSync" Type="raw"/>
+    </Property>
+    <CustomAction Id="ExpectedLogin" Property="OwnedLoginCommand" Value="&quot;[#GuiFile]&quot; --background"/>
+    <CustomAction Id="ExpectedPath" Property="OwnedLoginPath" Value="&quot;[#GuiFile]"/>
+    <CustomAction Id="RemoveLogin" Directory="TARGETDIR"
+                  ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v XinhuSync /f"
+                  Execute="immediate" Return="ignore"/>
+    <Upgrade Id="32E34D01-9EA5-4D9A-AD7C-40D0CA41EB9D">
+      <UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" Maximum="$(var.ProductVersion)" IncludeMaximum="no" Property="OLDPRODUCTS"/>
+      <UpgradeVersion Minimum="$(var.ProductVersion)" IncludeMinimum="no" OnlyDetect="yes" Property="NEWERPRODUCT"/>
+    </Upgrade>
+    <Condition Message="A newer release of Moon Fox Sync is already installed.">Installed OR NOT NEWERPRODUCT</Condition>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDir" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="Moon Fox Sync">
+            <Component Id="DesktopApp" Guid="71848EB6-38E9-4FC3-9CF9-F01340885544" Win64="yes">
+              <File Id="GuiFile" Source="gui.exe" Name="心狐同步.exe"/>
+              <File Id="ConfigFile" Source="gui.exe.config" Name="心狐同步.exe.config"/>
+              <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="DesktopApp" Type="integer" Value="1" KeyPath="yes"/>
+            </Component>
+            <Component Id="Core" Guid="E227CE61-EF6F-49DF-8663-7D404B677B41" Win64="yes">
+              <File Id="CoreFile" Source="kdrive.exe"/>
+              <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="Core" Type="integer" Value="1" KeyPath="yes"/>
+            </Component>
+            <Component Id="Agent" Guid="9B2E43FA-1215-46B5-BC34-444DF6100638" Win64="yes">
+              <File Id="AgentFile" Source="kdrive-agent.exe"/>
+              <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="Agent" Type="integer" Value="1" KeyPath="yes"/>
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Component Id="StartLink" Guid="9CBA634C-7D4C-4B8A-9673-97445E9224FD" Win64="yes">
+          <Shortcut Id="StartApp" Name="心狐同步" Target="[#GuiFile]" WorkingDirectory="INSTALLFOLDER" Icon="MoonFox.ico"/>
+          <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="MenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
+        </Component>
+      </Directory>
+      <Directory Id="DesktopFolder">
+        <Component Id="DesktopLink" Guid="A227253B-533A-4ECC-A550-DE6F7A9A48AD" Win64="yes">
+          <Shortcut Id="DesktopAppLink" Name="心狐同步" Target="[#GuiFile]" WorkingDirectory="INSTALLFOLDER" Icon="MoonFox.ico"/>
+          <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes"/>
+        </Component>
+      </Directory>
+    </Directory>
+    <Feature Id="Main" Title="Moon Fox Sync" Level="1">
+      <ComponentRef Id="DesktopApp"/><ComponentRef Id="Core"/><ComponentRef Id="Agent"/>
+      <ComponentRef Id="StartLink"/><ComponentRef Id="DesktopLink"/>
+    </Feature>
+    <InstallExecuteSequence>
+      <RemoveExistingProducts After="InstallInitialize"/>
+      <Custom Action="ExpectedLogin" After="CostFinalize">Installed</Custom>
+      <Custom Action="ExpectedPath" After="ExpectedLogin">Installed</Custom>
+      <Custom Action="RemoveLogin" After="InstallFinalize">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE AND (MOONFOXLOGIN ~= OwnedLoginCommand OR MOONFOXLOGIN ~= OwnedLoginPath)</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>

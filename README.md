@@ -1,27 +1,39 @@
-# 心狐同步 · Moon Fox Sync
+<p align="center"><img src="assets/brand/xinhu.png" width="96" height="96" alt="心狐同步的黑白狐尾标志"></p>
+<h1 align="center">心狐同步 · Moon Fox Sync</h1>
+<p align="center"><strong>把散落在多台电脑上的项目，连同 Git 忽略的原稿，一起备份到自己的 NAS。</strong></p>
+<p align="center"><a href="https://github.com/Kiriusss/MoonFoxSync/releases/latest">下载发行版</a> · <a href="快速开始.md">安装与配对</a> · <a href="https://github.com/Kiriusss/MoonFoxSync/issues">反馈问题</a></p>
 
-[下载客户端与 NAS 服务端](https://github.com/Kiriusss/MoonFoxSync/releases/latest) · [安装与配对](快速开始.md)
+在笔记本上拉到最新代码，作品集还是少了一张图。海报目录命中了 `.gitignore` 里的规则，原稿只存在书桌电脑上。心狐同步可以把整个工作目录保存成一个快照。换台电脑，打开 NAS 网页就能下载那张图，也能取回上周的整个项目。
 
-心狐同步面向一个家庭 NAS 和多台电脑。NAS 保存文件和历史版本。各台电脑可以独立决定哪些内容常驻本机、哪些只在需要时下载，以及什么网络条件下允许后台传输。Android 与原生鸿蒙客户端可按计划通过只读接口浏览 NAS 目录、项目历史并取回选定文件。
+桌面客户端负责捕获和传输文件。**梦枢天罗**运行在你的 NAS 上，保存各台电脑共用的项目历史，并提供网页控制台。普通文件夹和单个文件也可以备份。
 
-「梦枢天罗」是运行在 NAS 上的 Go 服务。桌面端把单个文件或整棵代码项目保存为一个版本，传输途中继续修改文件也能取回已保存的版本。已有 NAS 目录可以登记为只读资料库。在服务的 HTTPS 根地址可打开网页控制台，浏览目录和管理项目时间线。每个项目都可以单独设置历史策略、恢复以前的内容为当前版本，以及预览并删除时间点、重建保留版本。
+![梦枢天罗网页控制台的实际界面，左侧是 cake-atlas 项目文件，右侧正在预览从该快照读出的草莓蛋糕海报。](docs/images/nas-file-browser.webp)
 
-梦枢天罗提供项目文件列表、单文件下载与整项目 ZIP 下载。桌面客户端可从菜单栏、托盘和传输队列点击「立即同步」上传当前队列，也可以查看各文件的进度和传输速度，默认备份 Git 忽略文件，也能核对后快进拉取或推送 Git 分支。在客户端可以分别移除本机记录、删除 NAS 资料库。桌面支持按来源设置检查间隔与网络策略、按需启用 Codex 对话历史备份、手动关联多机共享项目，以及预览并合并 NAS 历史分叉。同步概览和菜单栏或托盘展示最近活动项目、传输队列和驻留状态。安装和操作见[快速开始](快速开始.md)。完整目标见[开发计划](开发计划.md)，协议及验收样本见[实施规格](docs/implementation/README.md)。研发目录和兼容命令分别沿用 KiriusDrive、`kdrive` 与 `kdrive-server`。
+## 第一次备份与恢复
 
-## 项目内并行传输
+1. **在 NAS 上准备资料库。** 下载 Linux amd64 服务端，为数据选择持久目录，例如 ZFS 数据集中的专用文件夹。按指南配置 HTTPS，初始化服务、创建资料库，再为桌面设备签发一次性 `sync` 配对码。[NAS 部署命令](快速开始.md#在-nas-上启动梦枢天罗)
+2. **在电脑上保存第一个版本。** 安装桌面客户端，输入 NAS 的 HTTPS 地址和配对码。打开「项目 → 导入项目目录」，选择测试项目的上层文件夹，勾选要备份的项目并确认归属。在资料库点「保存快照」，起名为「第一版」，再从队列点「立即同步」。[桌面安装](快速开始.md#安装与开机自启) · [项目导入](快速开始.md#手动统一项目和合并分叉)
+3. **亲手把文件取回来。** 在另一台设备用浏览器打开 NAS 的 HTTPS 根地址，用单独签发的 `reader` 配对码登录。在「项目与资料库」打开项目，点文件旁的「下载」。要核对整份备份，在桌面端「版本历史」选「恢复到…」，将第一版恢复到一个新目录，再打开文件确认内容。[网页浏览与下载](快速开始.md#梦枢天罗网页控制台)
 
-在桌面端「设置」→「项目内并行传输」，可以分别设置一个项目同时上传和下载的文件数，范围为 1–50，默认各 4。新设置用于之后开始的上传与恢复任务。传输页的上传主进度显示整个快照已处理的逻辑字节和文件数量，明细列出当前文件与速率。NAS 已有的内容也计入项目进度，最后由 NAS 确认发布。
+## 平时怎么用
 
-## 方案调研
+- **代码和原稿保存在同一个时间点。** 导入 GitHub 等父目录时，可以逐个选择子项目。新的 Git 项目默认包含未提交的修改以及 Git 忽略的文件，允许逐项排除。Git 提交库与分支引用仍由 Git 管理。桌面端另有「同步远端 Git」按钮，可以核对提交差后推送或快进拉取。[Git 集成](快速开始.md#同步远端-git)
+- **换电脑可以接着同一份项目历史。** 两台机器的本地目录可以叫不同的名字，导入时手动选同一个 NAS 项目即可。如果两台设备从同一旧版本继续修改并上传，NAS 会保留分叉。可以预览差异、处理冲突，再合入主线。[多设备关联与合并](快速开始.md#手动统一项目和合并分叉)
+- **把大传输留到回家。** 家庭网卡、直连路由与 NAS 身份匹配时，可以自动上传完整项目。通过 Tailscale 外出访问时，默认手动传，也可放行小任务。菜单栏与任务栏托盘都有「立即同步」。同一项目的上传、下载并发可分别设为 1–50 个文件，上传主进度显示整份快照，下方可看各文件的进度与实测速率。[网络策略](快速开始.md#按来源自动同步) · [传输进度](快速开始.md#查看传输进度)
+- **旧版本可以单独取回。** 网页可预览文本和常见图片，下载单个文件或所选快照的完整 ZIP。每个受管项目可保留全部、最近若干个或最近若干天的时间点。手动删除时间点前可以预览影响，并重建受影响版本的索引，保留其内容和恢复能力。[版本与保存策略](快速开始.md#恢复时间线保存策略和删除并重建)
 
-- **飞牛同步** 是本机 fnOS 自带生态中最先值得核对的成品。其按需同步支持保留占位、释放空间和固定本地，官方文档明确标注 Mac 端暂不支持按需同步。[飞牛按需同步](https://help.fnnas.com/articles/v1/sync/on-demand-sync)
-- **Seafile / SeaDrive** 最接近所需的桌面体验。Mac 用户可以在 Finder 移除下载，Windows 用户可以在资源管理器释放空间或固定离线文件。这个能力作用于 SeaDrive 管理的资料库。可以用它作为成品基线，比较释放后的行为、打开耗时和缓存占用。[Mac 客户端](https://help.seafile.com/drive_client/drive_client_for_macos/) · [Windows 客户端](https://help.seafile.com/drive_client/drive_client_for_win10/)
-- **Nextcloud** 值得参考服务端接口和 Finder 集成。客户端通过 macOS File Provider 展示云端目录，支持离线保留和回收本地内容。服务端对外提供分块上传和文件版本恢复接口。如果决定复用成熟后端，可以先验证这两个接口。桌面客户端的“大目录确认”针对目录大小，无法直接表达外出时每个文件的传输规则。[Finder 集成](https://docs.nextcloud.com/server/stable/user_manual/en/desktop/macosfileprovider.html) · [客户端配置](https://docs.nextcloud.com/server/stable/user_manual/en/desktop/configfile.html) · [分块上传](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/WebDAV/chunking.html) · [版本恢复](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/WebDAV/versions.html)
-- **git-annex** 把受版本管理的文件记录和可单独取回的文件内容分开。它支持按大小表达副本偏好，并能在释放前核实是否还有足够副本。KiriusDrive 的目标更具体，释放时必须核实指定 NAS 已有本机这次修改的完整版本。[副本检查](https://git-annex.branchable.com/copies/) · [内容策略](https://git-annex.branchable.com/git-annex-preferred-content/)
-- **Syncthing** 值得借鉴分块哈希、重用已有块和并发修改时保留冲突文件的设计。普通双向同步会传播删除，因此移除本机副本需要单独设计。[同步机制](https://docs.syncthing.net/users/syncing.html) · [常见问题](https://docs.syncthing.net/users/faq.html)
-- **群晖 Drive** 给出了一个具体的功能边界。它有按需同步，也有大小过滤，但官方明确说明 macOS 按需同步任务不支持按文件大小过滤。[群晖同步任务说明](https://kb.synology.com/en-global/DSM/tutorial/How_to_sync_files_between_Synology_NAS_and_your_computer_using_Drive_desktop)
+需要节省本机空间时，在快照浏览页面用「取回本机」按需打开文件，使用完再「释放缓存」。这个操作只清理应用下载的副本。已绑定工作目录中的原稿会继续留在原位置。[本机副本与缓存](快速开始.md#mac-上保存恢复和释放空间)
 
-上述文档中没有找到同时按家庭局域网身份、单文件大小和用户手动选择来调度双向传输的现成配置。建议优先自研网络调度和本地副本管理，两端通过版本化接口通信。文件系统集成采用操作系统提供的接口。
+## 平台与下载
 
-如果希望直接修改桌面端实现，可评估 Nextcloud 的开源桌面客户端。Seafile 维护方曾明确说明 SeaDrive 的开源版本面向 Linux。Mac 和 Windows 的 SeaDrive 在本项目中作为体验参考。[Nextcloud 桌面端源码](https://github.com/nextcloud/desktop) · [Seafile 维护方说明](https://forum.seafile.com/t/open-source-seadrive/21804)
+- **macOS**　Apple Silicon，macOS 14 及以上。打开 DMG，把应用拖入「应用程序」。支持菜单栏、登录自启、备份与恢复。[下载 Mac 版](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-0.4.5-Mac-arm64.dmg)
+- **Windows**　Windows 10/11 x64，需 .NET Framework 4.8。使用 MSI 安装桌面端，登录后可驻留任务栏通知区域。另提供 ZIP，完整解压后运行「心狐同步.exe」。[下载 Windows 安装程序](https://github.com/Kiriusss/MoonFoxSync/releases/latest/download/MoonFoxSync-Windows-x64.msi) · [便携 ZIP](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-0.4.5-Windows-x64.zip)
+- **NAS**　梦枢天罗服务端发行包面向 Linux amd64，内置网页控制台。已有 NAS 目录也可以登记为只读资料库。[下载 NAS 服务端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-Server-0.4.5-linux-amd64.tar.gz)
+- **Android**　提供只读开发版 APK，可浏览授权目录和历史，读取选定文件。当前包使用调试签名。[下载 Android 阅读端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-Android-0.1.1.apk)
+- **鸿蒙**　在系统浏览器打开 NAS 的 `/reader/`，以只读权限浏览、读取或下载文件。原生 HAP 仍在规划中。[手机配对与阅读](快速开始.md#手机读取)
 
+发行页提供源码归档及 SHA-256 校验清单。[全部发行包与校验值](https://github.com/Kiriusss/MoonFoxSync/releases)
+
+## 开发
+
+NAS 服务与桌面同步核心使用 Go，Mac 与 Windows 各自提供原生桌面界面。在仓库根目录运行 `go test ./...` 可执行 Go 测试。存储格式、同步协议、恢复语义和各客户端的实现入口见[开发规格](docs/implementation/README.md)。

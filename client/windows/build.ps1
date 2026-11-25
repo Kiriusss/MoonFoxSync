@@ -1,8 +1,10 @@
 ﻿param(
     [string]$OutDir = (Join-Path $PSScriptRoot '..\..\dist\windows-amd64'),
-    [ValidateSet('amd64', 'arm64')][string]$Arch = 'amd64'
+    [ValidateSet('amd64', 'arm64')][string]$Arch = 'amd64',
+    [switch]$Msi
 )
 $ErrorActionPreference = 'Stop'
+if ($Msi -and $Arch -ne 'amd64') { throw 'MSI 目前用于 Windows x64。' }
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $out = [IO.Path]::GetFullPath($OutDir)
 New-Item -ItemType Directory -Force $out | Out-Null
@@ -58,3 +60,15 @@ try {
     Pop-Location
 }
 Write-Output $out
+
+
+if ($Msi) {
+    $packager = Join-Path $repo 'scripts/package-windows-msi.py'
+    $installer = Join-Path (Split-Path -Parent $out) 'MoonFoxSync-Windows-x64.msi'
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        & py -3 $packager --input $out --output $installer
+    } else {
+        & python $packager --input $out --output $installer
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'Windows MSI 打包失败。' }
+}
