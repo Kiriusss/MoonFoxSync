@@ -86,6 +86,7 @@ func Open(home string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS tree_totals(digest TEXT PRIMARY KEY, bytes INTEGER NOT NULL, files INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS transfer_settings(id INTEGER PRIMARY KEY CHECK(id=1), uploads INTEGER NOT NULL CHECK(uploads BETWEEN 1 AND 50), downloads INTEGER NOT NULL CHECK(downloads BETWEEN 1 AND 50));
  INSERT OR IGNORE INTO transfer_settings VALUES(1,4,4);
+ CREATE TABLE IF NOT EXISTS deferred_spool_gc(kind TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(kind,digest));
  CREATE TABLE IF NOT EXISTS local_cleanup_plans(scope TEXT PRIMARY KEY,token TEXT NOT NULL UNIQUE,plan BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS local_cleanup(token TEXT NOT NULL,kind TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,size INTEGER NOT NULL,PRIMARY KEY(token,kind,key,digest));
  CREATE TABLE IF NOT EXISTS credential_file(device TEXT PRIMARY KEY,path TEXT NOT NULL,digest TEXT NOT NULL);
@@ -204,7 +205,7 @@ func (s *Store) bindSource(ctx context.Context, unit, path, profile string, prev
 }
 
 func (s *Store) bindSourceWithPolicy(ctx context.Context, unit, path, profile string, preview bool, expectedBase string, requested *IgnoredPolicy) (Binding, error) {
-	activity, lockErr := s.localLock(false)
+	activity, lockErr := s.projectActivity(unit)
 	if lockErr != nil {
 		return Binding{}, lockErr
 	}

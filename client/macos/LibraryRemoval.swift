@@ -138,7 +138,9 @@ struct LibraryRemovalSheet: View {
             } catch { model.message = target.title + "已完成。刷新状态失败：" + error.localizedDescription }
             dismiss()
         } catch {
-            if !error.localizedDescription.contains("使用原确认码重试") { self.plan = nil }
+            let detail = error.localizedDescription
+            let retryable = ["使用原确认码重试", "此项目正在使用", "此项目正在清理", "本机正在执行同步或清理", "旧版维护锁"].contains { detail.contains($0) }
+            if !retryable { self.plan = nil }
             self.error = error.localizedDescription
         }
     }

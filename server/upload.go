@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,6 +191,14 @@ type offer struct {
 func goodRef(o objectfmt.Ref) bool {
 	return validDigest.MatchString(o.Digest) && (o.Kind == "tree" || o.Kind == "file" || o.Kind == "chunk")
 }
+
+// For this lookup the snapshot is unknown. SQLite can otherwise choose the
+// covering (unit,snapshot,kind,digest) primary key and scan every ref in a unit
+// per digest. The existing reusable index resolves all three known keys.
+const reusableRefSQL = `SELECT 1 FROM refs r INDEXED BY reusable
+    WHERE r.unit=? AND r.kind=? AND r.digest=? AND NOT EXISTS(
+    SELECT 1 FROM snapshot_tombstones t WHERE t.unit=r.unit AND t.snapshot=r.snapshot)`
+
 func (s *Store) missing(w http.ResponseWriter, r *http.Request, dev string) error {
 	a, e := s.active(r, dev)
 	if e != nil {
@@ -211,13 +221,13 @@ func (s *Store) missing(w http.ResponseWriter, r *http.Request, dev string) erro
 		if !goodRef(o.Ref) || o.Size < 0 || o.Size > blockMax {
 			return bad("invalid offer")
 		}
-		_, e = tx.Exec("INSERT OR IGNORE INTO offers(upload,kind,digest,size,ready) SELECT ?,?,?,?,EXISTS(SELECT 1 FROM visible_refs WHERE unit=? AND kind=? AND digest=?)", a.id, o.Kind, o.Digest, o.Size, a.unit, o.Kind, o.Digest)
+		_, e = tx.Exec("INSERT OR IGNORE INTO offers(upload,kind,digest,size,ready) SELECT ?,?,?,?,EXISTS("+reusableRefSQL+")", a.id, o.Kind, o.Digest, o.Size, a.unit, o.Kind, o.Digest)
 		if e != nil {
 			return e
 		}
 		var sz int64
 		var ready bool
-		e = tx.QueryRow("SELECT size,ready=2 OR EXISTS (SELECT 1 FROM visible_refs WHERE unit=? AND kind=? AND digest=?) FROM offers WHERE upload=? AND kind=? AND digest=?", a.unit, o.Kind, o.Digest, a.id, o.Kind, o.Digest).Scan(&sz, &ready)
+		e = tx.QueryRow("SELECT size,ready=2 OR EXISTS ("+reusableRefSQL+") FROM offers WHERE upload=? AND kind=? AND digest=?", a.unit, o.Kind, o.Digest, a.id, o.Kind, o.Digest).Scan(&sz, &ready)
 		if e != nil {
 			return e
 		}
@@ -479,23 +489,35 @@ func (s *Store) finalize(w http.ResponseWriter, r *http.Request, dev string) err
 	if e = s.db.QueryRowContext(r.Context(), epochSQL, a.unit).Scan(&deleteEpoch); e != nil {
 		return e
 	}
+	// A ready offer belongs to this session. Reusable references belong to a
+	// visible snapshot in this unit. Prefetch the common case without loading
+	// the unit's entire history or letting unrelated offers grow memory unbounded.
+	// Any historical or unprefetched object takes the original indexed lookup.
+	authorized, e := s.prefetchPublishRefs(r.Context(), a)
+	if e != nil {
+		return e
+	}
 	seen := map[objectfmt.Ref]bool{}
 	var loadErr error
 	load := func(o objectfmt.Ref) ([]byte, error) {
 		if err := r.Context().Err(); err != nil {
 			return nil, err
 		}
-		var ok bool
-		err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM offers WHERE upload=? AND kind=? AND digest=? AND ready=2) OR EXISTS(SELECT 1 FROM visible_refs WHERE unit=? AND kind=? AND digest=?)", a.id, o.Kind, o.Digest, a.unit, o.Kind, o.Digest).Scan(&ok)
-		if err != nil {
-			loadErr = err
-			return nil, err
+		if !authorized[o] && !seen[o] {
+			var ok bool
+			err := s.db.QueryRowContext(r.Context(), "SELECT EXISTS(SELECT 1 FROM offers WHERE upload=? AND kind=? AND digest=? AND ready=2) OR EXISTS("+reusableRefSQL+")", a.id, o.Kind, o.Digest, a.unit, o.Kind, o.Digest).Scan(&ok)
+			if err != nil {
+				loadErr = err
+				return nil, err
+			}
+			if !ok {
+				loadErr = &problem{409, "OBJECTS_MISSING", "required object not confirmed", "upload_missing", []objectfmt.Ref{o}}
+				return nil, loadErr
+			}
 		}
-		if !ok {
-			loadErr = &problem{409, "OBJECTS_MISSING", "required object not confirmed", "upload_missing", []objectfmt.Ref{o}}
-			return nil, loadErr
-		}
-		b, err := s.read(o)
+		// VerifyTree/VerifyFile validate each ref and hash the supplied bytes
+		// before decoding or accepting them. Store.read would hash them twice.
+		b, err := os.ReadFile(s.path(o))
 		if err != nil {
 			loadErr = err
 			return nil, err
@@ -514,6 +536,9 @@ func (s *Store) finalize(w http.ResponseWriter, r *http.Request, dev string) err
 	}
 	if loadErr != nil {
 		return loadErr
+	}
+	if errors.Is(e, objectfmt.ErrObjectIntegrity) {
+		return errors.New("corrupt object on disk")
 	}
 	if e != nil {
 		return invalid(fmt.Sprintf("invalid snapshot closure: %v", e))
@@ -586,15 +611,8 @@ func (s *Store) finalize(w http.ResponseWriter, r *http.Request, dev string) err
 	if _, e = tx.Exec("INSERT INTO snapshots(unit,id,root,record) VALUES(?,?,?,?)", a.unit, d.ID, d.Root, sb); e != nil {
 		return e
 	}
-	stmt, e := tx.Prepare("INSERT INTO refs VALUES(?,?,?,?)")
-	if e != nil {
+	if e = writePublishRefs(r.Context(), tx, a.unit, d.ID, seen); e != nil {
 		return e
-	}
-	defer stmt.Close()
-	for o := range seen {
-		if _, e = stmt.Exec(a.unit, d.ID, o.Kind, o.Digest); e != nil {
-			return e
-		}
 	}
 	if e = s.projectNewHistory(r.Context(), tx, a.unit, d.ID); e != nil {
 		return e
@@ -609,4 +627,50 @@ func (s *Store) finalize(w http.ResponseWriter, r *http.Request, dev string) err
 		return e
 	}
 	return reply(w, 200, rec)
+}
+
+func (s *Store) prefetchPublishRefs(ctx context.Context, a session) (map[objectfmt.Ref]bool, error) {
+	const limit = 65536
+	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT kind,digest FROM offers WHERE upload=? AND ready=2 LIMIT ?)
+        UNION ALL SELECT * FROM (SELECT kind,digest FROM visible_refs WHERE unit=? AND snapshot=? LIMIT ?)`, a.id, limit, a.unit, a.draft.Parent, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	allowed := make(map[objectfmt.Ref]bool)
+	for rows.Next() {
+		var ref objectfmt.Ref
+		if err := rows.Scan(&ref.Kind, &ref.Digest); err != nil {
+			return nil, err
+		}
+		allowed[ref] = true
+	}
+	return allowed, rows.Err()
+}
+
+// A multi-row insert amortizes SQLite parsing and statement execution, while
+// the snapshot, all of its references and its receipt still commit atomically.
+func writePublishRefs(ctx context.Context, tx *sql.Tx, unit, snapshot string, seen map[objectfmt.Ref]bool) error {
+	const batch = 256
+	args := make([]any, 2, 2+batch*2)
+	args[0], args[1] = unit, snapshot
+	flush := func() error {
+		n := (len(args) - 2) / 2
+		sql := "INSERT INTO refs(unit,snapshot,kind,digest) VALUES " + strings.TrimSuffix(strings.Repeat("(?1,?2,?,?),", n), ",")
+		_, err := tx.ExecContext(ctx, sql, args...)
+		args = args[:2]
+		return err
+	}
+	for ref := range seen {
+		args = append(args, ref.Kind, ref.Digest)
+		if len(args) == cap(args) {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if len(args) > 2 {
+		return flush()
+	}
+	return nil
 }

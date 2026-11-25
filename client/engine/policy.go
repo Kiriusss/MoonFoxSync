@@ -275,7 +275,7 @@ func (s *Store) estimate(ctx context.Context, v Snapshot) (int64, error) {
 	return estimate, rows.Err()
 }
 func (s *Store) AutoSync(ctx context.Context, v Snapshot, p AutoPolicy) (*Receipt, error) {
-	activity, lockErr := s.localLock(false)
+	activity, lockErr := s.projectActivity(v.Unit)
 	if lockErr != nil {
 		return nil, lockErr
 	}

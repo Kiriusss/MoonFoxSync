@@ -69,14 +69,16 @@ func (s *Store) mayAdvanceShared(ctx context.Context, tx *sql.Tx, unit, dev stri
 	if (author == dev && d.BaseContentDigest == "") || root == d.Root {
 		return true, nil
 	}
-	expected, e := s.contentFingerprint(ctx, root)
+	// Shared subtrees in the two snapshots normalize to the same digest.
+	memo := make(map[string]string)
+	expected, e := s.contentFingerprintMemo(ctx, root, memo)
 	if e != nil {
 		return false, e
 	}
 	if expected == d.BaseContentDigest {
 		return true, nil
 	}
-	actual, e := s.contentFingerprint(ctx, d.Root)
+	actual, e := s.contentFingerprintMemo(ctx, d.Root, memo)
 	return actual == expected, e
 }
 

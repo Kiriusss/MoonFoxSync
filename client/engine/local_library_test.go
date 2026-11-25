@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -81,7 +82,7 @@ func TestLocalRemovalIsScopedAndResetClearsCredential(t *testing.T) {
 	if err = os.WriteFile(cached.Local, []byte("shared bytes"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := f.s.localLock(false)
+	lock, err := f.s.projectActivity(f.unit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,5 +136,148 @@ func TestLocalRemovalIsScopedAndResetClearsCredential(t *testing.T) {
 	}
 	if _, err = r.Restore(ctx, another.UnitID, otherSnapshot.ID, "", filepath.Join(t.TempDir(), "preserved")); err != nil {
 		t.Fatal("remote changed", err)
+	}
+}
+
+func TestScopedRemovalWithActiveUploadAndSpoolCapture(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	makeFile(t, f.source, "other.dat", "shared in-flight content")
+	first, err := f.s.Snapshot(ctx, f.unit, "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := f.s.Remote(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := remote.EnsureProject(ctx, f.unit, "sibling", "sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	makeFile(t, dir, "only", "different bytes")
+	if _, err = f.s.Bind(ctx, sibling.UnitID, dir, "project", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.s.Snapshot(ctx, sibling.UnitID, "sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same callback holds the lock throughout a real network upload.
+	in := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		<-done
+	}()
+	go func() {
+		g, e := f.s.localLock(false)
+		if e != nil {
+			done <- e
+			return
+		}
+		defer g.Close()
+		_, _, e = f.s.withUpload(ctx, sibling.UnitID, other.ID, func(Snapshot, string) (*Receipt, error) { close(in); <-release; return nil, nil })
+		done <- e
+	}()
+	<-in
+	ro, err := OpenRemovalPreview(f.s.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	writer, err := f.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = writer.Exec("UPDATE bindings SET base=base WHERE 0"); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := ro.LocalRemovalPlan(ctx, f.unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibPlan, err := ro.LocalRemovalPlan(ctx, sibling.UnitID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.Rollback()
+	if _, err = f.s.RemoveLocal(ctx, sibling.UnitID, sibPlan.Token); !errors.Is(err, errProjectInUse) {
+		t.Fatal("active target", err)
+	}
+	reset, err := ro.LocalRemovalPlan(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.RemoveLocal(ctx, "", reset.Token); err == nil {
+		t.Fatal("reset raced upload")
+	}
+	// A different capture may already have observed a deduplicated file on
+	// disk, but not yet published its references. Leave it until that commit.
+	pin, err := f.s.beginSpoolCapture(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.RemoveLocal(ctx, f.unit, plan.Token); err != nil {
+		pin.Close()
+		t.Fatal(err)
+	}
+	chunk := objectfmt.Ref{Kind: "chunk", Digest: objectfmt.Digest([]byte("shared in-flight content"))}
+	file := f.s.objectPath(chunk)
+	if _, err = os.Stat(file); err != nil {
+		t.Fatal("removed candidate during capture", err)
+	}
+	if _, err = f.s.db.Exec("INSERT INTO snapshot_objects VALUES(?,?,?,?)", other.ID, chunk.Kind, chunk.Digest, len("shared in-flight content")); err != nil {
+		t.Fatal(err)
+	}
+	pin.Close()
+	if err = f.s.collectDeferredSpool(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(file); err != nil {
+		t.Fatal("newly referenced object lost", err)
+	}
+	if _, err = f.s.snap(ctx, first.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("target metadata still present", err)
+	}
+}
+
+func TestSyncPendingSkipsProjectBeingForgotten(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	makeFile(t, f.source, "one", "one")
+	if _, err := f.s.Snapshot(ctx, f.unit, "one"); err != nil {
+		t.Fatal(err)
+	}
+	remote, err := f.s.Remote(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := remote.EnsureProject(ctx, f.unit, "second", "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	makeFile(t, dir, "two", "two")
+	if _, err = f.s.Bind(ctx, other.UnitID, dir, "project", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.Snapshot(ctx, other.UnitID, "two"); err != nil {
+		t.Fatal(err)
+	}
+	exclusive, err := f.s.projectLock(f.unit, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exclusive.Close()
+	report, err := f.s.SyncPending(ctx, AutoPolicy{})
+	if err != nil || report.Failed != 0 || report.Skipped != 1 || report.Uploaded != 1 {
+		t.Fatal(report, err)
 	}
 }

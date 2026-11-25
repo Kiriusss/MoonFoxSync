@@ -45,7 +45,7 @@ func (s *Store) ReassociateProject(ctx context.Context, oldUnit, targetUnit, pat
 }
 
 func (s *Store) reassociateWithPolicy(ctx context.Context, oldUnit, targetUnit, path, confirmedBase string, requested *IgnoredPolicy) (Binding, error) {
-	activity, lockErr := s.localLock(false)
+	activity, lockErr := s.projectActivity(oldUnit, targetUnit)
 	if lockErr != nil {
 		return Binding{}, lockErr
 	}

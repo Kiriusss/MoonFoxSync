@@ -114,7 +114,7 @@ func (s *Store) Cached(ctx context.Context) ([]CacheEntry, error) {
 	return out, rows.Err()
 }
 func (s *Store) Cache(ctx context.Context, action, unit, snapshot, member string) (CacheEntry, error) {
-	activity, lockErr := s.localLock(false)
+	activity, lockErr := s.projectActivity(unit)
 	if lockErr != nil {
 		return CacheEntry{}, lockErr
 	}

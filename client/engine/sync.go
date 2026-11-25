@@ -62,6 +62,11 @@ func (s *Store) withUpload(ctx context.Context, unit, id string, send func(Snaps
 	if err := validID(id); err != nil {
 		return nil, false, err
 	}
+	project, err := s.projectLock(unit, false)
+	if err != nil {
+		return nil, false, err
+	}
+	defer project.Close()
 	dir := filepath.Join(s.Home, "upload-locks")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, false, err

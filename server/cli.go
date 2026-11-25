@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const Version = "0.4.5"
+const Version = "0.4.6"
 
 func Run(args []string, out io.Writer) error {
 	usage := "梦枢天罗 · 心狐同步 NAS 服务端\nkdrive-server init|serve|unit add|unit grant|unit allow-delete|unit disallow-delete|pair issue|device revoke --config <file>\n"

@@ -79,7 +79,11 @@ func run(ctx context.Context, args []string) (any, error) {
 		items, err := engine.ActiveTransfers("")
 		return map[string]any{"items": items}, err
 	}
-	s, e := engine.Open("")
+	open := engine.Open
+	if len(args) >= 2 && args[0] == "library" && (args[1] == "forget-plan" || args[1] == "reset-plan") {
+		open = engine.OpenRemovalPreview
+	}
+	s, e := open("")
 	if e != nil {
 		return nil, e
 	}

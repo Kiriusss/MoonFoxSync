@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,11 +31,56 @@ type LocalRemovalPlan struct {
 // Readers may capture, transfer and cache concurrently. Cleanup exclusively owns
 // the app's files until database references and physical objects agree again.
 func (s *Store) localLock(exclusive bool) (*os.File, error) {
+	if !exclusive {
+		s.scopedMaintenanceReady()
+	}
 	f, err := lockFile(filepath.Join(s.Home, "local-maintenance.lock"), exclusive)
 	if err != nil {
-		return nil, fmt.Errorf("本机资料正在使用，请在当前任务结束后重试: %w", err)
+		if lockBusy(err) {
+			return nil, errors.New("本机正在执行同步或清理，任务结束后请重试")
+		}
+		return nil, fmt.Errorf("读取本机维护锁失败: %w", err)
 	}
 	return f, nil
+}
+
+// OpenRemovalPreview reads a current client database through WAL without doing
+// the normal startup writes. Older databases still take the migration path.
+func OpenRemovalPreview(home string) (*Store, error) {
+	dir, err := clientHome(home)
+	if err != nil {
+		return nil, err
+	}
+	dir, err = filepath.EvalSymlinks(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Open(home)
+	}
+	if err != nil {
+		return nil, err
+	}
+	file := filepath.Join(dir, "client.sqlite")
+	if _, err = os.Stat(file); errors.Is(err, fs.ErrNotExist) {
+		return Open(home)
+	} else if err != nil {
+		return nil, err
+	}
+	escaped := (&url.URL{Path: filepath.ToSlash(file)}).EscapedPath()
+	db, err := sql.Open("sqlite", "file:"+escaped+"?mode=ro&_pragma=busy_timeout(10000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	var ready bool
+	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='local_cleanup_plans')
+        AND EXISTS(SELECT 1 FROM pragma_table_info('bindings') WHERE name='generation')`).Scan(&ready)
+	if err != nil || !ready {
+		db.Close()
+		if err != nil {
+			return nil, err
+		}
+		return Open(home)
+	}
+	return &Store{dir, db}, nil
 }
 
 func (s *Store) LocalRemovalPlan(ctx context.Context, unit string) (LocalRemovalPlan, error) {
@@ -190,11 +236,24 @@ func (s *Store) RemoveLocal(ctx context.Context, unit, token string) (LocalRemov
 	if len(token) != 64 {
 		return p, errors.New("请先预览并确认本机删除范围")
 	}
-	lock, err := s.localLock(true)
+	// An old binary may still hold a pre-upgrade, unscoped operation.
+	// Establish the scoped protocol only across a point with no such holders.
+	scoped := unit != "" && s.scopedMaintenanceReady()
+	lock, err := s.localLock(!scoped)
 	if err != nil {
+		if unit != "" && !scoped {
+			return p, fmt.Errorf("正在等待已有任务退出旧版维护锁，请稍后重试：%w", err)
+		}
 		return p, err
 	}
 	defer lock.Close()
+	if unit != "" {
+		project, err := s.projectLock(unit, true)
+		if err != nil {
+			return p, err
+		}
+		defer project.Close()
+	}
 	// SQLite commits the reference removal and its cleanup journal together.
 	// A retry can finish an interrupted physical cleanup without a surviving binding.
 	previous, err := pendingLocalPlan(ctx, s.db, unit)
@@ -254,7 +313,7 @@ func (s *Store) RemoveLocal(ctx context.Context, unit, token string) (LocalRemov
 		// unreferenced spool objects. Sweep the spool on a full reset.
 		items = append(items, cleanupItem{"sweep", "spool", "", 0})
 	} else {
-		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO local_cleanup SELECT ?1,'object',o.kind,o.digest,0 FROM snapshot_objects o JOIN snapshots s ON s.id=o.snapshot WHERE s.unit=?2 AND NOT EXISTS(SELECT 1 FROM snapshot_objects a JOIN snapshots b ON a.snapshot=b.id WHERE a.kind=o.kind AND a.digest=o.digest AND b.unit<>?2)`, token, unit)
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO deferred_spool_gc SELECT o.kind,o.digest FROM snapshot_objects o JOIN snapshots s ON s.id=o.snapshot WHERE s.unit=?1 AND NOT EXISTS(SELECT 1 FROM snapshot_objects a JOIN snapshots b ON a.snapshot=b.id WHERE a.kind=o.kind AND a.digest=o.digest AND b.unit<>?1)`, unit)
 		if err != nil {
 			return p, err
 		}
@@ -345,6 +404,17 @@ func (s *Store) finishLocalCleanup(ctx context.Context, token string, compact bo
 			return fmt.Errorf("本机记录已移除，清理尚未完成，使用原确认码重试：%w", err)
 		}
 	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if err = s.collectDeferredSpool(ctx); err != nil {
+		return fmt.Errorf("本机记录已移除，清理尚未完成，使用原确认码重试：%w", err)
+	}
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, "DELETE FROM local_cleanup WHERE token=?", token); err != nil {
 		return err
 	}
@@ -405,7 +475,9 @@ func (s *Store) removeCleanupItem(ctx context.Context, tx *sql.Tx, item cleanupI
 	case "sweep":
 		return s.sweepSpool(ctx, tx)
 	case "object":
-		return s.removeSpoolObject(ctx, tx, item.key, item.digest)
+		// Old interrupted journals also go through the capture-safe collector.
+		_, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO deferred_spool_gc VALUES(?,?)", item.key, item.digest)
+		return err
 	}
 	return errors.New("不支持的本机清理项")
 }

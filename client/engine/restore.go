@@ -55,6 +55,13 @@ type RestoreResult struct {
 
 func (r *Remote) Restore(ctx context.Context, unit, snapshot, member, destination string) (RestoreResult, error) {
 	var res RestoreResult
+	if r.store != nil {
+		activity, e := r.store.projectActivity(unit)
+		if e != nil {
+			return res, e
+		}
+		defer activity.Close()
+	}
 	if e := validID(unit); e != nil {
 		return res, e
 	}
@@ -332,6 +339,13 @@ type GetResult struct {
 // Get downloads a current file, including from a read-only external unit.
 func (r *Remote) Get(ctx context.Context, unit, member, destination string) (GetResult, error) {
 	var res GetResult
+	if r.store != nil {
+		activity, e := r.store.projectActivity(unit)
+		if e != nil {
+			return res, e
+		}
+		defer activity.Close()
+	}
 	if e := validID(unit); e != nil {
 		return res, e
 	}

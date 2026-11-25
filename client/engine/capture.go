@@ -257,11 +257,18 @@ func (c *capture) entry(p string) (objectfmt.Entry, error) {
 	return result, e
 }
 func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, error) {
-	activity, lockErr := s.localLock(false)
+	activity, lockErr := s.projectActivity(unit)
 	if lockErr != nil {
 		return Snapshot{}, lockErr
 	}
 	defer activity.Close()
+	// Another project's removal can retire references while this capture has
+	// computed an object but has not yet committed its references.
+	captureLock, lockErr := s.beginSpoolCapture(ctx)
+	if lockErr != nil {
+		return Snapshot{}, lockErr
+	}
+	defer func() { captureLock.Close(); _ = s.collectDeferredSpool(ctx) }()
 	var v Snapshot
 	b, e := s.binding(ctx, unit)
 	if e != nil {

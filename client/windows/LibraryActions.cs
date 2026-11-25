@@ -97,7 +97,9 @@ internal sealed partial class MainWindow
             try { await Bridge.Call(null,args.ToArray()); break; }
             catch (InvalidOperationException ex)
             {
-                if (!ex.Message.Contains("使用原确认码重试") || MessageBox.Show(this, ex.Message, title,
+                bool retryable = ex.Message.Contains("使用原确认码重试") || ex.Message.Contains("此项目正在使用") ||
+                                 ex.Message.Contains("此项目正在清理") || ex.Message.Contains("本机正在执行同步或清理") || ex.Message.Contains("旧版维护锁");
+                if (!retryable || MessageBox.Show(this, ex.Message, title,
                     MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) != DialogResult.Retry) throw;
             }
         }

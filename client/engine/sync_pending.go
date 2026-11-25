@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -105,6 +106,10 @@ func (s *Store) SyncPending(ctx context.Context, policy AutoPolicy) (PendingSync
 		}
 		_, reused, err := s.withUpload(ctx, v.Unit, v.ID, send)
 		switch {
+		case errors.Is(err, sql.ErrNoRows), errors.Is(err, errProjectRemoving):
+			// A project may be intentionally forgotten between reading the queue and its turn.
+			blocked[v.ID] = true
+			result.Skipped++
 		case errors.Is(err, errUploadActive):
 			blocked[v.ID] = true
 			result.Active++

@@ -130,7 +130,7 @@ func bindingStamp(b Binding) string { raw, _ := json.Marshal(b); return string(r
 // ignored files and edits not yet captured. Immutable versions make concurrent remote
 // publishes safe: the next push from a stale base becomes a recoverable fork.
 func (s *Store) CheckoutProject(ctx context.Context, unit, destination string) (Binding, error) {
-	activity, lockErr := s.localLock(false)
+	activity, lockErr := s.projectActivity(unit)
 	if lockErr != nil {
 		return Binding{}, lockErr
 	}

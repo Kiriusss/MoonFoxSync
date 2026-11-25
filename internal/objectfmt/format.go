@@ -47,6 +47,9 @@ type Store func(Ref, []byte) error
 
 var ErrInvalid = errors.New("invalid snapshot object")
 
+// ErrObjectIntegrity identifies stored bytes that disagree with their object key.
+var ErrObjectIntegrity = fmt.Errorf("%w: object integrity check failed", ErrInvalid)
+
 func invalid(detail string) error {
 	return fmt.Errorf("%w: %s", ErrInvalid, detail)
 }
@@ -81,7 +84,7 @@ func get(ref Ref, load Load) ([]byte, error) {
 		return nil, err
 	}
 	if len(b) > ChunkSize || Digest(b) != ref.Digest {
-		return nil, invalid(ref.Kind + " wrong size or SHA-256: " + ref.Digest)
+		return nil, fmt.Errorf("%w: %s wrong size or SHA-256: %s", ErrObjectIntegrity, ref.Kind, ref.Digest)
 	}
 	return b, nil
 }
@@ -381,6 +384,21 @@ func VerifyFile(id string, load Load) error {
 	info, err := ReadFile(id, load)
 	if err != nil {
 		return err
+	}
+	if len(info.Chunks) == 1 {
+		chunk := info.Chunks[0]
+		data, err := get(chunk, load)
+		if err != nil {
+			return err
+		}
+		if int64(len(data)) != info.Size {
+			return invalid("wrong chunk length")
+		}
+		// get has already hashed these exact bytes. A one-chunk file has the same digest.
+		if chunk.Digest != info.SHA256 {
+			return invalid("whole-file checksum mismatch")
+		}
+		return nil
 	}
 	h := sha256.New()
 	if err = WriteRange(info, 0, info.Size, h, load); err != nil {

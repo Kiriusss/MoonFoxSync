@@ -26,10 +26,10 @@
 
 ## 平台与下载
 
-- **macOS**　Apple Silicon，macOS 14 及以上。打开 DMG，把应用拖入「应用程序」。支持菜单栏、登录自启、备份与恢复。[下载 Mac 版](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-0.4.5-Mac-arm64.dmg)
-- **Windows**　Windows 10/11 x64，需 .NET Framework 4.8。使用 MSI 安装桌面端，登录后可驻留任务栏通知区域。另提供 ZIP，完整解压后运行「心狐同步.exe」。[下载 Windows 安装程序](https://github.com/Kiriusss/MoonFoxSync/releases/latest/download/MoonFoxSync-Windows-x64.msi) · [便携 ZIP](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-0.4.5-Windows-x64.zip)
-- **NAS**　梦枢天罗服务端发行包面向 Linux amd64，内置网页控制台。已有 NAS 目录也可以登记为只读资料库。[下载 NAS 服务端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-Server-0.4.5-linux-amd64.tar.gz)
-- **Android**　提供只读开发版 APK，可浏览授权目录和历史，读取选定文件。当前包使用调试签名。[下载 Android 阅读端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.5/MoonFoxSync-Android-0.1.1.apk)
+- **macOS**　Apple Silicon，macOS 14 及以上。打开 DMG，把应用拖入「应用程序」。支持菜单栏、登录自启、备份与恢复。[下载 Mac 版](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-0.4.6-Mac-arm64.dmg)
+- **Windows**　Windows 10/11 x64，需 .NET Framework 4.8。使用 MSI 安装桌面端，登录后可驻留任务栏通知区域。另提供 ZIP，完整解压后运行「心狐同步.exe」。[下载 Windows 安装程序](https://github.com/Kiriusss/MoonFoxSync/releases/latest/download/MoonFoxSync-Windows-x64.msi) · [便携 ZIP](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-0.4.6-Windows-x64.zip)
+- **NAS**　梦枢天罗服务端发行包面向 Linux amd64，内置网页控制台。已有 NAS 目录也可以登记为只读资料库。[下载 NAS 服务端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-Server-0.4.6-linux-amd64.tar.gz)
+- **Android**　提供只读开发版 APK，可浏览授权目录和历史，读取选定文件。当前包使用调试签名。[下载 Android 阅读端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-Android-0.1.1.apk)
 - **鸿蒙**　在系统浏览器打开 NAS 的 `/reader/`，以只读权限浏览、读取或下载文件。原生 HAP 仍在规划中。[手机配对与阅读](快速开始.md#手机读取)
 
 发行页提供源码归档及 SHA-256 校验清单。[全部发行包与校验值](https://github.com/Kiriusss/MoonFoxSync/releases)
