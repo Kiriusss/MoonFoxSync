@@ -12,7 +12,7 @@ internal sealed partial class MainWindow
 {
     Task ProjectTimeline()
     {
-        var project = Selected(projectGrid);
+        var project = SelectedProject();
         return OpenTimeline(project.Field("unitId"), project.Field("name"), "");
     }
     Task LibraryTimeline()

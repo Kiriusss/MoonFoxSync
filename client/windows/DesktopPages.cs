@@ -11,24 +11,19 @@ namespace XinhuSync
 internal sealed partial class MainWindow
 {
     readonly Dictionary<string, Control> pages = new Dictionary<string, Control>();
-    readonly Dictionary<string, NavItem> navigation = new Dictionary<string, NavItem>();
-    readonly Label heading = Style.Text("概览", 23, true, Style.Ink),
-                   connectionBadge = Style.Text("", 9, true, Style.Plum),
-                   endpoint = Style.Text("", 10, false, Style.Muted),
-                   libValue = Style.Text("—", 18, true, Style.Ink),
-                   queueValue = Style.Text("—", 18, true, Style.Ink),
-                   modeValue = Style.Text("—", 16, true, Style.Ink),
+    Sidebar sidebar;
+    readonly Label heading = Style.Text("同步概览", 22, true, Style.Ink),
                    libEmpty = Style.Text("", 9, false, Style.Muted),
                    cacheEmpty = Style.Text("", 9, false, Style.Muted),
                    queueEmpty = Style.Text("", 9, false, Style.Muted),
                    scanStatus = Style.Text("", 9, false, Style.Muted),
                    startupMessage = Style.Text("", 9, false, Style.Muted);
-    readonly TableLayoutPanel activity = new TableLayoutPanel();
+    Dashboard dashboard;
     readonly FlowLayoutPanel writeTools = Bar();
     readonly CheckBox login = Check("登录 Windows 时启动"), automatic = Check("每分钟检查绑定来源"),
                       away = Check("外出时自动上传小任务");
     readonly TextBox homeUrl = new TextBox(), adapter = new TextBox();
-    Button serverAction, savePolicy, mergeFork, libraryTimeline, syncPending, syncSelected, syncErrors;
+    Button savePolicy, mergeFork, libraryTimeline, syncPending, syncSelected, syncErrors;
     bool settingFields;
     bool? previousEnabled;
     string lastConnection;
@@ -149,13 +144,12 @@ internal sealed partial class MainWindow
 
     void BuildWindow()
     {
+        SuspendLayout();
         Text = "心狐同步 · Moon Fox Sync";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         Font = Style.Type(9);
         ForeColor = Style.Ink;
         BackColor = Style.Canvas;
-        AutoScaleDimensions = new SizeF(96, 96);
-        AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1070, 730);
         MinimumSize = new Size(890, 600);
@@ -165,36 +159,17 @@ internal sealed partial class MainWindow
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(layout);
-        var rail = Column();
-        rail.BackColor = Style.Rail;
-        rail.Paint += delegate(object sender, PaintEventArgs e)
-        {
-            using (var pen = new Pen(Style.Line))
-                e.Graphics.DrawLine(pen, rail.Width - 1, 0, rail.Width - 1, rail.Height);
+        sidebar = new Sidebar(ShowSection);
+        var rail = new System.Windows.Forms.Integration.ElementHost {
+            Dock = DockStyle.Fill, Margin = Padding.Empty, Child = sidebar
         };
-        var brand = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
-                                           Padding = new Padding(15, 10, 6, 8), Margin = Padding.Empty };
-        brand.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48));
-        brand.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        var avatar = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom,
-                                      Margin = new Padding(0, 0, 8, 0) };
-        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(
-                   "xinhu64.png")) if (stream != null) using (var image = Image.FromStream(stream))
-            avatar.Image = new Bitmap(image);
-        brand.Controls.Add(avatar, 0, 0);
-        brand.Controls.Add(Occupy(Style.Text("心狐同步", 13, true, Style.Ink)), 1, 0);
-        Row(rail, brand, 84);
-        AddNav(rail, "overview", "概览");
-        AddNav(rail, "projects", "项目");
-        AddNav(rail, "libraries", "资料库");
-        AddNav(rail, "queue", "同步队列");
-        AddNav(rail, "cache", "下载缓存");
-        Row(rail, new Panel(), -1);
-        AddNav(rail, "settings", "设置");
-        Row(rail, new Panel(), 14);
+        sidebar.WidthChanged += delegate(int logicalWidth) {
+            using (var g = CreateGraphics())
+                layout.ColumnStyles[0].Width = logicalWidth * g.DpiX / 96f;
+        };
         layout.Controls.Add(rail, 0, 0);
         var workspace = Column();
-        workspace.Padding = new Padding(24, 16, 24, 9);
+        workspace.Padding = new Padding(28, 11, 26, 10);
         var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
                                           Margin = Padding.Empty };
         head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -202,8 +177,9 @@ internal sealed partial class MainWindow
         head.Controls.Add(Occupy(heading), 0, 0);
         var refresh = Action("刷新", RefreshPage);
         refresh.Anchor = AnchorStyles.Right;
+        refresh.Margin = Padding.Empty;
         head.Controls.Add(refresh, 1, 0);
-        Row(workspace, head, 63);
+        Row(workspace, head, 62);
         AddTransferPanel(workspace);
         pages.Add("overview", Overview());
         pages.Add("projects", ProjectsPage());
@@ -219,123 +195,45 @@ internal sealed partial class MainWindow
         Row(workspace, content, -1);
         Row(workspace, Occupy(status), 30);
         layout.Controls.Add(workspace, 1, 0);
+        AutoScaleDimensions = new SizeF(96, 96);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ResumeLayout(true);
+        var available = Screen.FromControl(this).WorkingArea.Size;
+        MinimumSize = new Size(Math.Min(MinimumSize.Width, available.Width),
+                               Math.Min(MinimumSize.Height, available.Height));
+        Size = new Size(Math.Min(Width, available.Width), Math.Min(Height, available.Height));
         DisplayPage("overview");
-    }
-    void AddNav(TableLayoutPanel rail, string key, string name)
-    {
-        var button = new NavItem(key, name);
-        button.Click += delegate
-        {
-            ShowSection(key);
-        };
-        navigation.Add(key, button);
-        Row(rail, button, 44);
     }
     void DisplayPage(string target)
     {
         page = target;
         foreach (var p in pages)
             p.Value.Visible = p.Key == target;
-        foreach (var b in navigation)
-            b.Value.Active = b.Key == target;
-        heading.Text = navigation[target].Text;
+        heading.Text = sidebar.SelectPage(target);
         status.Text = "";
         pages[target].BringToFront();
     }
     Control Overview()
     {
-        var p = Column();
-        var hero = new Surface { Margin = new Padding(0, 0, 0, 14), BackColor = Color.FromArgb(253, 248, 249),
-                                 Padding = new Padding(16, 12, 16, 12) };
-        var h = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1,
-                                       Margin = Padding.Empty };
-        h.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
-        h.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        h.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var icon = Style.Symbol("server", Style.Plum);
-        icon.Size = new Size(44, 44);
-        icon.BackColor = Style.Blush;
-        icon.Anchor = AnchorStyles.Left;
-        h.Controls.Add(icon, 0, 0);
-        var connectionBox = Column();
-        Row(connectionBox, Occupy(connectionBadge), 22);
-        Row(connectionBox, Occupy(Style.Text("梦枢天罗", 17, true, Style.Ink)), 35);
-        Row(connectionBox, Occupy(endpoint), 23);
-        h.Controls.Add(connectionBox, 1, 0);
-        serverAction = Action("配对服务器", async delegate {
-            if (paired)
-                await RefreshConnection();
-            else
-                await Pair();
-        }, true);
-        serverAction.Anchor = AnchorStyles.Right;
-        h.Controls.Add(serverAction, 2, 0);
-        hero.Controls.Add(h);
-        Row(p, hero, 126);
-        var stats = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1,
-                                           Margin = Padding.Empty };
-        for (int i = 0; i < 3; i++)
-            stats.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / 3));
-        stats.Controls.Add(Metric("资料库", libValue, "libraries", true), 0, 0);
-        stats.Controls.Add(Metric("待上传快照", queueValue, "queue", true), 1, 0);
-        stats.Controls.Add(Metric("自动同步", modeValue, "settings", false), 2, 0);
-        Row(p, stats, 103);
-        var recent = new Surface { Padding = new Padding(15, 8, 15, 8), Margin = new Padding(0, 2, 0, 0) };
-        var inside = Column();
-        var title = Bar();
-        var name = Style.Text("近期项目", 12, true, Style.Ink);
-        name.Width = 120;
-        name.Height = 36;
-        title.Controls.Add(name);
-        var go = Style.Action("查看项目", delegate { ShowSection("projects"); });
-        title.Controls.Add(go);
-        Row(inside, title, 46);
-        activity.Dock = DockStyle.Fill;
-        activity.ColumnCount = 3;
-        activity.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        activity.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        activity.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 136));
-        activity.Margin = Padding.Empty;
-        activity.AutoScroll = true;
-        Row(inside, activity, -1);
-        recent.Controls.Add(inside);
-        Row(p, recent, -1);
-        return p;
-    }
-    Control Metric(string name, Label number, string dest, bool gap)
-    {
-        var card = new Surface { Margin = new Padding(0, 0, gap ? 10 : 0, 13),
-                                 Padding = new Padding(12, 9, 12, 9), Cursor = Cursors.Hand };
-        var stack = Column();
-        var first = Bar();
-        var symbol = Style.Symbol(dest, Style.Plum);
-        symbol.Size = new Size(24, 24);
-        symbol.Margin = new Padding(0, 0, 4, 0);
-        var caption = Style.Text(name, 9, false, Style.Muted);
-        caption.Size = new Size(82, 24);
-        first.Controls.Add(symbol);
-        first.Controls.Add(caption);
-        Row(stack, first, 25);
-        Row(stack, Occupy(number), -1);
-        card.Controls.Add(stack);
-        foreach (Control c in new Control[] { card, stack, first, symbol, caption, number })
-            c.Click += delegate
-            {
-                ShowSection(dest);
-            };
-        return card;
+        dashboard = new Dashboard(delegate(string destination) { ShowSection(destination); },
+                                  delegate(string id) { SelectProject(id); },
+                                  async delegate { await Run(Pair); },
+                                  async delegate { await Run(RefreshConnection); },
+                                  async delegate { await Run(ImportProjects); });
+        return new System.Windows.Forms.Integration.ElementHost {
+            Child = dashboard, Dock = DockStyle.Fill, Margin = Padding.Empty
+        };
     }
     void UpdateOverview()
     {
-        if (serverAction == null)
+        if (dashboard == null)
             return;
         int queued = queueKnown ? allJobs.Count(x => x.Field("state") == "queued") : -1;
-        queueValue.Text = queued < 0 ? "—" : queued.ToString();
-        libValue.Text = libraryCountKnown ? libraries.Count.ToString() : "—";
-        modeValue.Text = shell.Busy ? "检查中" : shell.AutoSyncEnabled ? "已开启" : "已暂停";
-        connectionBadge.Text = connection;
-        endpoint.Text = String.IsNullOrEmpty(serverAddress) ? "连接 NAS 后可访问获授权的资料库" : serverAddress;
-        serverAction.Text = paired ? "检查连接" : "配对服务器";
+        dashboard.SetStatus(connection, serverAddress, paired, libraryCountKnown,
+                            libraryCountKnown ? libraries.Count.ToString() : "—",
+                            queued < 0 ? "—" : queued.ToString(),
+                            shell.Busy ? "检查中" : shell.AutoSyncEnabled ? "已开启" : "已暂停");
+        dashboard.SetProjects(shell.Projects, shell.ProjectError, paired);
         if (lastConnection != connection || queued != lastQueued)
         {
             lastConnection = connection;
@@ -352,56 +250,61 @@ internal sealed partial class MainWindow
                 : queueKnown && allJobs.Count == 0 ? "还没有本机快照"
                 : shell.Queued == 0 ? "队列中没有待上传的快照" : "";
         }
-        activity.SuspendLayout();
-        try
-        {
-            while (activity.Controls.Count > 0)
-                activity.Controls[0].Dispose();
-            activity.RowStyles.Clear();
-            activity.RowCount = 0;
-            foreach (var r in shell.Projects.Take(5))
-            {
-                int n = activity.RowCount++;
-                activity.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-                var projectLink = Style.Action(r.Field("name"), delegate { SelectProject(r.Field("unitId")); });
-                projectLink.TextAlign = ContentAlignment.MiddleLeft;
-                projectLink.AutoSize = false;
-                projectLink.Dock = DockStyle.Fill;
-                projectLink.FlatAppearance.BorderSize = 0;
-                activity.Controls.Add(projectLink, 0, n);
-                activity.Controls.Add(Occupy(Style.Text(ProjectDisplay.Nas(r), 9, false, Style.Plum)), 1, n);
-                activity.Controls.Add(
-                    Occupy(Style.Text("Git · " + ProjectDisplay.Git(r), 9, false, Style.Muted)), 2, n);
-            }
-            if (shell.Projects.Count == 0)
-            {
-                activity.RowCount = 1;
-                activity.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-                var empty = Occupy(Style.Text(!String.IsNullOrEmpty(shell.ProjectError)
-                                                  ? shell.ProjectError
-                                                  : "暂无项目，可在「项目」中导入",
-                                              10, false, Style.Muted));
-                activity.Controls.Add(empty, 0, 0);
-                activity.SetColumnSpan(empty, 3);
-            }
-            activity.RowCount++;
-            activity.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        }
-        finally
-        {
-            activity.ResumeLayout();
-        }
     }
 
-    static Control GridCard(ListView grid, Label empty)
+    static Control GridCard(ListView grid, Label empty, string glyph = null, Func<string> emptyDetail = null, Button destination = null)
     {
-        var card = new Surface { Margin = Padding.Empty, Padding = new Padding(10) };
-        var body = Column();
-        Row(body, grid, -1);
-        Row(body, Occupy(empty), 24);
-        card.Controls.Add(body);
-        return card;
+        var list = new Surface { Padding = new Padding(12), Margin = Padding.Empty };
+        var feedback = emptyDetail == null ? empty : Style.Text("", 9, false, Style.Muted);
+        feedback.Dock = DockStyle.Bottom;
+        feedback.Height = 28;
+        list.Controls.Add(grid);
+        list.Controls.Add(feedback);
+        if (emptyDetail == null) return list;
+
+        var host = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Style.Canvas };
+        var notice = new Surface { Dock = DockStyle.Top, Height = 92, Padding = new Padding(16, 12, 16, 12) };
+        var row = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 3, RowCount = 1 };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var symbol = Style.Symbol(glyph, Style.Plum);
+        symbol.BackColor = Style.Rail;
+        symbol.Anchor = AnchorStyles.Left;
+        symbol.Size = new Size(42, 42);
+        row.Controls.Add(symbol, 0, 0);
+        var words = Column();
+        empty.Font = Style.Type(11, true);
+        empty.ForeColor = Style.Ink;
+        Row(words, Occupy(empty), 28);
+        var detail = Style.Text("", 9, false, Style.Muted);
+        detail.TextAlign = ContentAlignment.TopLeft;
+        Row(words, Occupy(detail), -1);
+        row.Controls.Add(words, 1, 0);
+        if (destination != null)
+        {
+            destination.Anchor = AnchorStyles.Right;
+            row.Controls.Add(destination, 2, 0);
+        }
+        notice.Controls.Add(row);
+        host.Controls.Add(list);
+        host.Controls.Add(notice);
+        EventHandler update = delegate {
+            // A populated queue can also carry a sync result. Keep those rows selectable.
+            string hint = empty.Text.Length == 0 ? null : emptyDetail();
+            detail.Text = hint;
+            notice.Visible = hint != null;
+            list.Visible = hint == null;
+            feedback.Text = empty.Text;
+            feedback.Visible = hint == null && empty.Text.Length != 0;
+        };
+        empty.TextChanged += update;
+        host.VisibleChanged += update;
+        update(null, EventArgs.Empty);
+        return host;
     }
+
     Control LibraryPage()
     {
         var pageBody = Column();
@@ -431,8 +334,20 @@ internal sealed partial class MainWindow
         writeTools.Controls.Add(Action("从 NAS 删除…", delegate { Writer(); return RemoveLibrary("delete", UnitId); }));
         writeTools.Visible = false;
         Row(pageBody, writeTools, 0);
-        Row(pageBody, Occupy(breadcrumb), 32);
-        Row(pageBody, GridCard(files, libEmpty), -1);
+        breadcrumb.MinimumSize = new Size(0, 30);
+        Row(pageBody, Occupy(breadcrumb), 0);
+        EventHandler selection = delegate {
+            versionBar.Visible = breadcrumb.Visible = units.SelectedItem != null;
+        };
+        units.SelectedIndexChanged += selection;
+        libEmpty.TextChanged += selection;
+        selection(null, EventArgs.Empty);
+        Row(pageBody, GridCard(files, libEmpty, "libraries", delegate {
+            if (!paired) return "使用 NAS 签发的一次性配对码连接这台电脑。";
+            if (units.SelectedItem == null) return "在 NAS 控制台确认此设备的资料库授权后刷新。";
+            return Managed && SnapshotId == "" ? "为已绑定的资料库保存快照并上传，即可浏览版本内容。"
+                : "选择其他资料库、版本或目录继续浏览。";
+        }), -1);
         return pageBody;
     }
     Control QueuePage()
@@ -455,18 +370,33 @@ internal sealed partial class MainWindow
         bar.Controls.Add(syncPending);
         bar.Controls.Add(syncSelected);
         bar.Controls.Add(syncErrors);
-        Row(p, bar, 44);
-        Row(p, GridCard(jobs, queueEmpty), -1);
+        bar.Margin = new Padding(0, 0, 0, 10);
+        Row(p, bar, 0);
+        Row(p, GridCard(jobs, queueEmpty, "queue", delegate {
+            return queueKnown && allJobs.Count == 0 && String.IsNullOrEmpty(shell.SyncResult)
+                ? "在资料库保存一个文件或项目快照，即可在这里上传。" : null;
+        }, Style.Action("打开资料库", delegate { ShowSection("libraries"); })), -1);
         return p;
     }
     Control CachePage()
     {
         var p = Column();
         var bar = Bar();
-        bar.Controls.Add(Action("查看或取回", ReadCache, true));
-        bar.Controls.Add(Action("释放选中缓存", Evict));
-        Row(p, bar, 44);
-        Row(p, GridCard(cache, cacheEmpty), -1);
+        var fetch = Action("查看或取回", ReadCache, true);
+        var release = Action("释放选中缓存", Evict);
+        fetch.Enabled = release.Enabled = false;
+        cache.SelectedIndexChanged += delegate {
+            var item = cache.SelectedItems.Count == 0 ? null : cache.SelectedItems[0].Tag as Record;
+            fetch.Enabled = item != null;
+            release.Enabled = item != null && item.Field("state") != "nas_only";
+        };
+        bar.Controls.Add(fetch);
+        bar.Controls.Add(release);
+        bar.Margin = new Padding(0, 0, 0, 10);
+        Row(p, bar, 0);
+        Row(p, GridCard(cache, cacheEmpty, "cache", delegate {
+            return "在资料库中打开快照并取回文件，即可在这里查看或释放本机副本。";
+        }, Style.Action("打开资料库", delegate { ShowSection("libraries"); })), -1);
         return p;
     }
 
@@ -511,6 +441,8 @@ internal sealed partial class MainWindow
         fieldBox.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         fieldBox.Controls.Add(Occupy(Style.Text("家庭 HTTPS 地址", 9, false, Style.Muted)), 0, 0);
         fieldBox.Controls.Add(Occupy(Style.Text("物理网卡名称", 9, false, Style.Muted)), 0, 1);
+        homeUrl.AccessibleName = "家庭 HTTPS 地址";
+        adapter.AccessibleName = "物理网卡名称";
         homeUrl.Anchor = adapter.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         fieldBox.Controls.Add(homeUrl, 1, 0);
         fieldBox.Controls.Add(adapter, 1, 1);
@@ -528,7 +460,7 @@ internal sealed partial class MainWindow
         buttons.Controls.Add(savePolicy);
         buttons.Controls.Add(Action("立即检查", shell.CheckNow));
         buttons.Controls.Add(Action("按来源设置…", SourceSchedules));
-        Row(policy, buttons, 40);
+        Row(policy, buttons, 0);
         Row(policy, Occupy(scanStatus), 34);
         policyCard.Controls.Add(policy);
         Row(settings, policyCard, 287);

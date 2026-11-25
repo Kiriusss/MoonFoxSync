@@ -118,113 +118,53 @@ internal static class ProjectDisplay
 
 internal sealed partial class MainWindow
 {
-    readonly ListView projectGrid = Grid("项目", "NAS 备份", "Git 上游", "最近活动");
-    readonly Label projectsNote = Style.Text("", 9, false, Style.Muted);
+    ProjectView projectView;
     string selectedProject;
-    void ProjectDetails()
+    Record SelectedProject()
     {
-        if (projectGrid.SelectedItems.Count == 0)
-            return;
-        var p = (Record)projectGrid.SelectedItems[0].Tag;
-        string date = LocalTime(p.Field("gitCheckedAt"));
-        projectsNote.Text = p.Field("name") + "    NAS · " + ProjectDisplay.Nas(p) + "    Git · " +
-                            ProjectDisplay.Git(p) + (String.IsNullOrEmpty(date) ? "" : "    核对 " + date);
+        var selected = projectView.Selected;
+        if (selected == null) throw new InvalidOperationException("请先选择项目。");
+        return selected;
     }
-    List<Record> paintedProjects;
-
     Control ProjectsPage()
     {
-        var p = Column();
-        var first = Bar();
-        first.Controls.Add(Action("导入项目父目录…", ImportProjects, true));
-        first.Controls.Add(Action("检查选中项目的 Git 上游", async delegate {
-            var project = Selected(projectGrid);
-            if (project.Field("kind") != "git" || String.IsNullOrEmpty(project.Field("path")))
-                throw new InvalidOperationException("请选择本机已绑定的 Git 项目。");
-            if (MessageBox.Show(this,
-                                "将重新核对 Git 上游。为比较分支历史，可能从远端取回本机缺少的 Git 对象。",
-                                "深度检查 " + project.Field("name"), MessageBoxButtons.OKCancel,
-                                MessageBoxIcon.Information) != DialogResult.OK)
-                return;
-            var fresh = await Bridge.Call(null, "project", "git", "--path", project.Field("path"), "--fetch");
-            shell.ApplyGitState(project.Field("unitId"), fresh);
-            RenderProjects();
-        }));
-        first.Controls.Add(Action("同步远端 Git…", SyncGitRemote));
-        first.Controls.Add(Action("打开资料库", OpenProjectLibrary));
-        Row(p, first, 0);
-        var second = Bar();
-        second.Controls.Add(Action("接收 NAS 主线到新目录…", CheckoutProject));
-        second.Controls.Add(Action("版本时间线…", ProjectTimeline));
-        second.Controls.Add(Action("管理 Git 忽略项…", EditIncludes));
-        second.Controls.Add(Action("移除本机记录…", delegate { return RemoveLibrary("forget", Selected(projectGrid).Field("unitId")); }));
-        second.Controls.Add(Action("从 NAS 删除…", delegate { return RemoveLibrary("delete", Selected(projectGrid).Field("unitId")); }));
-        Row(p, second, 0);
-        Row(p, GridCard(projectGrid, projectsNote), -1);
-        projectGrid.Resize += delegate
-        {
-            int total =
-                Math.Max(300, projectGrid.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4);
-            int[] weights = { 31, 18, 33, 18 };
-            for (int i = 0; i < weights.Length; i++)
-                projectGrid.Columns[i].Width = total * weights[i] / 100;
+        projectView = new ProjectView(async delegate { await Run(ImportProjects); },
+                                      async delegate { await Run(OpenProjectLibrary); }, LocalTime);
+        projectView.AddAction("版本时间线…", async delegate { await Run(ProjectTimeline); });
+        projectView.AddAction("接收 NAS 主线到新目录…", async delegate { await Run(CheckoutProject); });
+        projectView.AddSeparator();
+        projectView.AddAction("检查 Git 上游…", async delegate { await Run(CheckProjectGit); }, true);
+        projectView.AddAction("同步远端 Git…", async delegate { await Run(SyncGitRemote); }, true);
+        projectView.AddAction("管理 Git 忽略项…", async delegate { await Run(EditIncludes); }, true);
+        projectView.AddSeparator();
+        projectView.AddAction("移除本机记录…", async delegate {
+            await Run(delegate { return RemoveLibrary("forget", SelectedProject().Field("unitId")); });
+        });
+        projectView.AddAction("从 NAS 删除…", async delegate {
+            await Run(delegate { return RemoveLibrary("delete", SelectedProject().Field("unitId")); });
+        });
+        return new System.Windows.Forms.Integration.ElementHost {
+            Child = projectView, Dock = DockStyle.Fill, Margin = Padding.Empty
         };
-        projectGrid.SelectedIndexChanged += delegate
-        {
-            ProjectDetails();
-        };
-        projectGrid.ShowItemToolTips = true;
-        projectGrid.DoubleClick += async delegate
-        {
-            await Run(OpenProjectLibrary);
-        };
-        return p;
+    }
+    async Task CheckProjectGit()
+    {
+        var project = SelectedProject();
+        if (project.Field("kind") != "git" || String.IsNullOrEmpty(project.Field("path")))
+            throw new InvalidOperationException("请选择本机已绑定的 Git 项目。");
+        if (MessageBox.Show(this, "将重新核对 Git 上游。为比较分支历史，可能从远端取回本机缺少的 Git 对象。",
+                            "深度检查 " + project.Field("name"), MessageBoxButtons.OKCancel,
+                            MessageBoxIcon.Information) != DialogResult.OK)
+            return;
+        var fresh = await Bridge.Call(null, "project", "git", "--path", project.Field("path"), "--fetch");
+        shell.ApplyGitState(project.Field("unitId"), fresh);
+        RenderProjects();
     }
     void RenderProjects()
     {
-        var rows = shell.Projects;
-        if (rows == null)
-            return;
-        projectsNote.Text =
-            String.IsNullOrEmpty(shell.ProjectError)
-                ? (rows.Count == 0 ? "可导入 GitHub 等项目父目录" : "共 " + rows.Count + " 个本机项目")
-                : shell.ProjectError;
-        if (Object.ReferenceEquals(paintedProjects, rows) && selectedProject == null)
-            return;
-        var current = selectedProject ?? (projectGrid.SelectedItems.Count == 0
-                                              ? null
-                                              : ((Record)projectGrid.SelectedItems[0].Tag).Field("unitId"));
-        projectGrid.BeginUpdate();
-        try
-        {
-            projectGrid.Items.Clear();
-            foreach (var r in rows)
-            {
-                Add(projectGrid, r, r.Field("name"), ProjectDisplay.Nas(r), ProjectDisplay.Git(r),
-                    LocalTime(r.Field("lastActivity")));
-                var added = projectGrid.Items[projectGrid.Items.Count - 1];
-                added.ToolTipText =
-                    String.Join("\n", new[] { r.Field("path"), r.Field("gitError"),
-                                              String.IsNullOrEmpty(r.Field("gitCheckedAt"))
-                                                  ? ""
-                                                  : "Git 上次检查 " + LocalTime(r.Field("gitCheckedAt")) }
-                                          .Where(v => v.Length > 0));
-                if (r.Field("unitId") == current)
-                {
-                    var item = projectGrid.Items[projectGrid.Items.Count - 1];
-                    item.Selected = true;
-                    item.Focused = true;
-                    item.EnsureVisible();
-                    selectedProject = null;
-                }
-            }
-            paintedProjects = rows;
-        }
-        finally
-        {
-            projectGrid.EndUpdate();
-        }
-        ProjectDetails();
+        projectView.SetProjects(shell.Projects, shell.ProjectError, selectedProject);
+        if (selectedProject != null && projectView.Selected != null && projectView.Selected.Field("unitId") == selectedProject)
+            selectedProject = null;
     }
     public void SelectProject(string id)
     {
@@ -353,7 +293,7 @@ internal sealed partial class MainWindow
     }
     async Task OpenProjectLibrary()
     {
-        var id = Selected(projectGrid).Field("unitId");
+        var id = SelectedProject().Field("unitId");
         await RefreshConnection();
         var item = units.Items.Cast<Choice>().FirstOrDefault(x => x.Row.Field("unitId") == id);
         if (item == null)
@@ -372,7 +312,7 @@ internal sealed partial class MainWindow
     }
     async Task CheckoutProject()
     {
-        var r = Selected(projectGrid);
+        var r = SelectedProject();
         using (var pick = new SaveFileDialog { Title = "新工作树目录（必须尚不存在）", Filter = "目录名称|*.*",
                                                CheckFileExists = false, AddExtension = false,
                                                FileName = r.Field("name") + "-NAS" })
@@ -403,7 +343,7 @@ internal sealed partial class MainWindow
     }
     async Task EditIncludes()
     {
-        var r = Selected(projectGrid);
+        var r = SelectedProject();
         if (r.Field("kind") != "git")
             throw new InvalidOperationException("该操作仅适用于 Git 项目。");
         string id = r.Field("unitId");

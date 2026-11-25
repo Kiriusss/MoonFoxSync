@@ -23,7 +23,8 @@ func TestSharedCloneCannotDropAnotherComputersIgnoredWeights(t *testing.T) {
 	id := project.UnitID
 	git := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "-c", "commit.gpgsign=false", "-C", dir}, args...)...)
+		// This fixture compares working-tree bytes across clones, including on Git for Windows.
+		cmd := exec.Command("git", append([]string{"-c", "core.autocrlf=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "-c", "commit.gpgsign=false", "-C", dir}, args...)...)
 		if out, e := cmd.CombinedOutput(); e != nil {
 			t.Fatalf("git %s: %v", out, e)
 		}

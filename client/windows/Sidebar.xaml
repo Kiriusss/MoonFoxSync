@@ -1,0 +1,65 @@
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="#F5F2F2" UseLayoutRounding="True"
+      TextElement.FontFamily="Segoe UI, Microsoft YaHei UI" TextElement.Foreground="#302A30">
+  <Grid.Resources>
+    <Style x:Key="RailButton" TargetType="Button">
+      <Setter Property="Margin" Value="9,2"/>
+      <Setter Property="Height" Value="41"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="#443D43"/>
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Plate" CornerRadius="8" Background="Transparent" Padding="12,0">
+              <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Stretch"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Plate" Property="Background" Value="#EAE5E6"/>
+              </Trigger>
+              <Trigger Property="Tag" Value="selected">
+                <Setter TargetName="Plate" Property="Background" Value="#EFDFE3"/>
+                <Setter Property="Foreground" Value="#90394F"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Plate" Property="Background" Value="#E1CFD5"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Plate" Property="BorderBrush" Value="#983E57"/>
+                <Setter TargetName="Plate" Property="BorderThickness" Value="1"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Grid.Resources>
+  <Grid.RowDefinitions>
+    <RowDefinition Height="84"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+  </Grid.RowDefinitions>
+  <Border Grid.RowSpan="3" BorderThickness="0,0,1,0" BorderBrush="#E7E2E2"/>
+  <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+    <Image x:Name="Avatar" Width="34" Height="34" RenderOptions.BitmapScalingMode="HighQuality">
+      <Image.Clip><RectangleGeometry Rect="0,0,34,34" RadiusX="8" RadiusY="8"/></Image.Clip>
+    </Image>
+    <TextBlock x:Name="Brand" VerticalAlignment="Center" Margin="10,0,0,0" FontSize="18" FontWeight="SemiBold" Text="心狐同步"/>
+  </StackPanel>
+  <StackPanel x:Name="Pages" Grid.Row="1"/>
+  <StackPanel Grid.Row="2">
+    <StackPanel x:Name="Utilities"/>
+    <Border BorderThickness="0,1,0,0" BorderBrush="#E0DBDD" Margin="16,9,16,0"/>
+    <StackPanel Orientation="Horizontal" Margin="16,14,8,17">
+      <Border Background="#FFFFFF" CornerRadius="9" Width="34" Height="34">
+        <Path Data="M3,4 L21,4 21,16 3,16 Z M1,19 L23,19" Stroke="#70676D" StrokeThickness="1.6"
+              Width="19" Height="15" Stretch="Uniform" StrokeLineJoin="Round"/>
+      </Border>
+      <StackPanel x:Name="DeviceText" VerticalAlignment="Center" Margin="10,0,0,0">
+        <TextBlock Text="此设备" FontSize="10.5" Foreground="#70676D"/>
+        <TextBlock x:Name="MachineName" MaxWidth="111" FontWeight="SemiBold" FontSize="12" TextTrimming="CharacterEllipsis"/>
+      </StackPanel>
+    </StackPanel>
+  </StackPanel>
+</Grid>

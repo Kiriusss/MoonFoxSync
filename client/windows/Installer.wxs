@@ -11,12 +11,12 @@
     <Property Id="NET48RELEASE">
       <RegistrySearch Id="FindNet48" Root="HKLM" Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" Name="Release" Type="raw" Win64="yes"/>
     </Property>
-    <Condition Message="Install .NET Framework 4.8 or later before installing Moon Fox Sync.">Installed OR NET48RELEASE &gt;= "#528040"</Condition>
+    <Condition Message="请先安装 .NET Framework 4.8 或更高版本，再安装心狐同步。">Installed OR NET48RELEASE &gt;= "#528040"</Condition>
     <Property Id="MOONFOXLOGIN">
       <RegistrySearch Id="FindLoginCommand" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="XinhuSync" Type="raw"/>
     </Property>
-    <CustomAction Id="ExpectedLogin" Property="OwnedLoginCommand" Value="&quot;[#GuiFile]&quot; --background"/>
-    <CustomAction Id="ExpectedPath" Property="OwnedLoginPath" Value="&quot;[#GuiFile]"/>
+    <CustomAction Id="ExpectedLogin" Property="OwnedLoginCommand" Value="&quot;[INSTALLFOLDER]心狐同步.exe&quot; --background"/>
+    <CustomAction Id="ExpectedPath" Property="OwnedLoginPath" Value="&quot;[INSTALLFOLDER]心狐同步.exe&quot;"/>
     <CustomAction Id="RemoveLogin" Directory="TARGETDIR"
                   ExeCommand="&quot;[SystemFolder]reg.exe&quot; delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v XinhuSync /f"
                   Execute="immediate" Return="ignore"/>
@@ -24,12 +24,14 @@
       <UpgradeVersion Minimum="0.0.0" IncludeMinimum="yes" Maximum="$(var.ProductVersion)" IncludeMaximum="no" Property="OLDPRODUCTS"/>
       <UpgradeVersion Minimum="$(var.ProductVersion)" IncludeMinimum="no" OnlyDetect="yes" Property="NEWERPRODUCT"/>
     </Upgrade>
-    <Condition Message="A newer release of Moon Fox Sync is already installed.">Installed OR NOT NEWERPRODUCT</Condition>
+    <Condition Message="本机已安装更高版本的心狐同步。">Installed OR NOT NEWERPRODUCT</Condition>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="ProgramsDir" Name="Programs">
           <Directory Id="INSTALLFOLDER" Name="Moon Fox Sync">
             <Component Id="DesktopApp" Guid="71848EB6-38E9-4FC3-9CF9-F01340885544" Win64="yes">
+              <RemoveFolder Id="RemoveInstallFolder" On="uninstall"/>
+              <RemoveFolder Id="RemoveEmptyProgramsDir" Directory="ProgramsDir" On="uninstall"/>
               <File Id="GuiFile" Source="gui.exe" Name="心狐同步.exe"/>
               <File Id="ConfigFile" Source="gui.exe.config" Name="心狐同步.exe.config"/>
               <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="DesktopApp" Type="integer" Value="1" KeyPath="yes"/>
@@ -47,13 +49,13 @@
       </Directory>
       <Directory Id="ProgramMenuFolder">
         <Component Id="StartLink" Guid="9CBA634C-7D4C-4B8A-9673-97445E9224FD" Win64="yes">
-          <Shortcut Id="StartApp" Name="心狐同步" Target="[#GuiFile]" WorkingDirectory="INSTALLFOLDER" Icon="MoonFox.ico"/>
+          <Shortcut Id="StartApp" Name="心狐同步" Target="[INSTALLFOLDER]心狐同步.exe" WorkingDirectory="INSTALLFOLDER" Icon="MoonFox.ico"/>
           <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="MenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
         </Component>
       </Directory>
       <Directory Id="DesktopFolder">
         <Component Id="DesktopLink" Guid="A227253B-533A-4ECC-A550-DE6F7A9A48AD" Win64="yes">
-          <Shortcut Id="DesktopAppLink" Name="心狐同步" Target="[#GuiFile]" WorkingDirectory="INSTALLFOLDER" Icon="MoonFox.ico"/>
+          <Shortcut Id="DesktopAppLink" Name="心狐同步" Target="[INSTALLFOLDER]心狐同步.exe" WorkingDirectory="INSTALLFOLDER" Icon="MoonFox.ico"/>
           <RegistryValue Root="HKCU" Key="Software\MoonFoxSync\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes"/>
         </Component>
       </Directory>
@@ -62,6 +64,36 @@
       <ComponentRef Id="DesktopApp"/><ComponentRef Id="Core"/><ComponentRef Id="Agent"/>
       <ComponentRef Id="StartLink"/><ComponentRef Id="DesktopLink"/>
     </Feature>
+    <Property Id="ARPNOMODIFY" Value="1"/>
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="启动心狐同步"/>
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+    <Property Id="WixShellExecTarget" Value="[#GuiFile]"/>
+    <CustomAction Id="LaunchClient" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" Return="ignore"/>
+    <UI>
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9"/>
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei UI" Size="12"/>
+      <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei UI" Size="9" Bold="yes"/>
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal"/>
+      <DialogRef Id="ErrorDlg"/>
+      <DialogRef Id="FatalError"/>
+      <DialogRef Id="FilesInUse"/>
+      <DialogRef Id="MsiRMFilesInUse"/>
+      <DialogRef Id="PrepareDlg"/>
+      <DialogRef Id="ProgressDlg"/>
+      <DialogRef Id="ResumeDlg"/>
+      <DialogRef Id="UserExit"/>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg">NOT Installed OR PATCH</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg">Installed AND NOT PATCH</Publish>
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchClient" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1" AND ACTION = "INSTALL" AND NOT Installed AND NOT REMOVE</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="2">1</Publish>
+    </UI>
+    <UIRef Id="WixUI_Common"/>
+    <UIRef Id="WixUI_ErrorProgressText"/>
     <InstallExecuteSequence>
       <RemoveExistingProducts After="InstallInitialize"/>
       <Custom Action="ExpectedLogin" After="CostFinalize">Installed</Custom>

@@ -10,7 +10,7 @@ internal sealed partial class MainWindow
 {
     async Task SyncGitRemote()
     {
-        var project = Selected(projectGrid);
+        var project = SelectedProject();
         string path = project.Field("path");
         if (project.Field("kind") != "git" || path.Length == 0)
             throw new InvalidOperationException("请选择本机已绑定的 Git 项目。");

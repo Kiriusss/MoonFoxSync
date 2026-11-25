@@ -9,7 +9,8 @@ $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $out = [IO.Path]::GetFullPath($OutDir)
 New-Item -ItemType Directory -Force $out | Out-Null
 
-if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+$dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+if ($dotnet -and (& dotnet --list-sdks)) {
     & dotnet build (Join-Path $PSScriptRoot 'XinhuSync.csproj') -c Release -o $out
     if ($LASTEXITCODE -ne 0) { throw 'Windows 界面编译失败。' }
 } else {
@@ -21,7 +22,7 @@ if (Get-Command dotnet -ErrorAction SilentlyContinue) {
     $productInfo = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString() + '.cs')
     Push-Location $PSScriptRoot
     try {
-        [xml]$project = Get-Content -Raw -LiteralPath 'XinhuSync.csproj'
+        [xml]$project = Get-Content -Encoding UTF8 -Raw -LiteralPath 'XinhuSync.csproj'
         $version = $project.Project.PropertyGroup.Version
         $product = $project.Project.PropertyGroup.Product
         [IO.File]::WriteAllText($productInfo, @"
@@ -31,7 +32,9 @@ if (Get-Command dotnet -ErrorAction SilentlyContinue) {
 "@)
         $sources = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.cs -File | ForEach-Object { $_.FullName })
         $trayResources = @(Get-ChildItem (Join-Path $repo 'assets/brand/tray/TrayFox*.ico') | ForEach-Object { "/resource:$($_.FullName),$($_.Name)" })
-        & $csc /nologo /codepage:65001 /utf8output /target:winexe /platform:anycpu /langversion:5 /optimize+ /win32icon:xinhu.ico /win32manifest:application.manifest /resource:xinhu64.png,xinhu64.png /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "/out:$out\心狐同步.exe" @trayResources @sources $productInfo
+        $wpfDir = Join-Path (Split-Path $csc) 'WPF'
+        $xamlResources = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.xaml -File | ForEach-Object { "/resource:$($_.FullName),$($_.Name)" })
+        & $csc "/lib:$wpfDir" /r:WindowsBase.dll /r:PresentationCore.dll /r:PresentationFramework.dll /r:WindowsFormsIntegration.dll /r:System.Xaml.dll @xamlResources /nologo /codepage:65001 /utf8output /target:winexe /platform:anycpu /langversion:5 /optimize+ /win32icon:xinhu.ico /win32manifest:application.manifest /resource:xinhu64.png,xinhu64.png /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "/out:$out\心狐同步.exe" @trayResources @sources $productInfo
         if ($LASTEXITCODE -ne 0) { throw 'Windows 界面编译失败。' }
     } finally {
         Pop-Location

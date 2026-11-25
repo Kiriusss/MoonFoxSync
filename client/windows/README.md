@@ -1,6 +1,6 @@
 # 心狐同步 Windows 客户端
 
-解压 Windows 桌面包，双击 `心狐同步.exe`。图形入口使用 C# / WinForms，目标环境为已安装 .NET Framework 4.8 的 Windows 10/11。将 `心狐同步.exe.config`、`kdrive.exe`、`kdrive-agent.exe` 保留在程序目录。GUI 直接启动同目录的 Go CLI，并与 CLI 共用凭据管理器、SQLite 队列和应用缓存。
+解压 Windows 桌面包，双击 `心狐同步.exe`。图形入口使用 C#，主导航、同步概览和项目列表使用 WPF/XAML，操作对话框与任务栏托盘使用 WinForms，目标环境为已安装 .NET Framework 4.8 的 Windows 10/11。将 `心狐同步.exe.config`、`kdrive.exe`、`kdrive-agent.exe` 保留在程序目录。GUI 直接启动同目录的 Go CLI，并与 CLI 共用凭据管理器、SQLite 队列和应用缓存。
 
 ## 使用
 
@@ -50,6 +50,14 @@ NAS 发现主线或依赖关系变化时会拒绝旧操作，窗口会重新读�
 ```
 
 默认产物放在 `dist\windows-amd64`。ARM64 使用 `.\client\windows\build.ps1 -Arch arm64 -OutDir dist\windows-arm64`。界面为 AnyCPU 程序，两个 Go 程序按所选架构编译。
+
+制作 Windows x64 安装程序需要 Python 3 和 WiX Toolset 3（含 WixUIExtension 和 WixUtilExtension）。在 Windows 上将含有 `candle.exe`、`light.exe` 的目录加入 PATH，然后运行：
+
+```powershell
+.\client\windows\build.ps1 -Msi
+```
+
+默认输出为 `dist\MoonFoxSync-Windows-x64.msi`。发布前在 Windows 测试用户下双击检查安装向导，从开始菜单启动并退出客户端，再次运行 MSI 验证修复与卸载。升级验证应先安装上一发行版，再运行新 MSI。完成页默认勾选「启动心狐同步」，可取消勾选。静默安装、修复与卸载完成后不会启动客户端。
 
 本阶段在 macOS arm64 使用 Microsoft .NET SDK 10.0.404 和 .NET Framework 4.8 参考程序集完成 Release 交叉编译。Go CLI 已通过 TLS 集成测试及 Windows 交叉编译。Windows 真机上的首次配对、系统凭据管理器、文件对话框、网卡识别和高 DPI 显示仍需实机验收。
 
