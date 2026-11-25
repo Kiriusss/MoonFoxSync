@@ -35,6 +35,69 @@ function Get-ProductCode($package, $expectedVersion) {
     }
 }
 
+function Assert-InstallerUi($package) {
+    $database = $installer.OpenDatabase((Convert-Path -LiteralPath $package), 0)
+    function Get-UiRows([string]$table, [string[]]$columns) {
+        $fields = ($columns | ForEach-Object { '`' + $_ + '`' }) -join ', '
+        $view = $database.OpenView(("SELECT $fields FROM " + '`' + $table + '`'))
+        try {
+            [void]$view.Execute()
+            while ($record = $view.Fetch()) {
+                $values = for ($i = 1; $i -le $columns.Count; $i++) { $record.StringData($i) }
+                $values -join '|'
+            }
+        } finally {
+            [void]$view.Close()
+            [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
+        }
+    }
+    function Assert-Rows($table, $columns, $expected) {
+        $actual = @(Get-UiRows $table $columns)
+        foreach ($row in $expected) {
+            if ($row -cnotin $actual) { throw "Installer UI table $table lacks: $row" }
+        }
+    }
+    try {
+        Assert-Rows Dialog 'Dialog' @('WelcomeDlg', 'VerifyReadyDlg', 'MaintenanceWelcomeDlg', 'MaintenanceTypeDlg', 'ProgressDlg', 'ExitDialog')
+        $sequence = @{}
+        foreach ($row in Get-UiRows InstallUISequence @('Action', 'Condition', 'Sequence')) {
+            $action, $condition, $order = $row -split '\|', 3
+            $sequence[$action] = @{ Condition = $condition; Order = [int]$order }
+        }
+        if ($sequence.WelcomeDlg.Condition -ne 'NOT Installed OR PATCH' -or
+            $sequence.MaintenanceWelcomeDlg.Condition -ne 'Installed AND NOT RESUME AND NOT Preselected AND NOT PATCH' -or
+            $sequence.ExitDialog.Order -ne -1 -or $sequence.ProgressDlg.Order -le 0 -or
+            $sequence.ProgressDlg.Order -ge $sequence.ExecuteAction.Order) {
+            throw 'The interactive setup must route fresh installs, maintenance, progress and successful completion'
+        }
+        foreach ($action in 'WelcomeDlg', 'MaintenanceWelcomeDlg') {
+            if ($sequence[$action].Order -le 0 -or $sequence[$action].Order -ge $sequence.ProgressDlg.Order) {
+                throw "$action must appear before installation progress"
+            }
+        }
+        Assert-Rows ControlEvent @('Dialog_', 'Control_', 'Event', 'Argument', 'Condition', 'Ordering') @(
+            'WelcomeDlg|Next|NewDialog|VerifyReadyDlg|1|1'
+            'MaintenanceWelcomeDlg|Next|NewDialog|MaintenanceTypeDlg|1|1'
+            'MaintenanceTypeDlg|RepairButton|NewDialog|VerifyReadyDlg|1|1'
+            'MaintenanceTypeDlg|RemoveButton|NewDialog|VerifyReadyDlg|1|1'
+            'ExitDialog|Finish|DoAction|LaunchClient|WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1" AND ACTION = "INSTALL" AND NOT Installed AND NOT REMOVE|1'
+            'ExitDialog|Finish|EndDialog|Return|1|2'
+        )
+        Assert-Rows Control @('Dialog_', 'Control', 'Type', 'Property') @('ExitDialog|OptionalCheckBox|CheckBox|WIXUI_EXITDIALOGOPTIONALCHECKBOX')
+        Assert-Rows ControlCondition @('Dialog_', 'Control_', 'Action', 'Condition') @('ExitDialog|OptionalCheckBox|Show|WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT AND NOT Installed')
+        Assert-Rows CheckBox @('Property', 'Value') @('WIXUI_EXITDIALOGOPTIONALCHECKBOX|1')
+        Assert-Rows Property @('Property', 'Value') @(
+            'WIXUI_EXITDIALOGOPTIONALCHECKBOX|1'
+            'WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT|启动心狐同步'
+            'WixShellExecTarget|[#GuiFile]'
+        )
+        Assert-Rows CustomAction @('Action', 'Type', 'Source', 'Target') @('LaunchClient|65|WixCA|WixShellExec')
+        Write-Host 'Verified installation, maintenance, completion and optional launch in the compiled MSI dialog tables.'
+    } finally {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
+    }
+}
+
 function Invoke-Msi($operation, $target, $stage) {
     $log = Join-Path $LogDir "$stage.log"
     $proc = Start-Process msiexec.exe -ArgumentList "$operation `"$target`" /qn /norestart /l*v `"$log`"" -PassThru -Wait -WindowStyle Hidden
@@ -102,6 +165,7 @@ function Test-Gui {
 
 $newCode = Get-ProductCode $Candidate $Version
 $oldCode = Get-ProductCode $Previous $PreviousVersion
+Assert-InstallerUi $Candidate
 if ([version]$Version -le [version]$PreviousVersion -or $oldCode -eq $newCode) { throw 'Expected a major MSI upgrade between distinct products' }
 if ($installer.ProductState($newCode) -ne -1 -or $installer.ProductState($oldCode) -ne -1 -or
     (Test-Path -LiteralPath $installDir) -or ($links | Where-Object { Test-Path -LiteralPath $_ })) {
