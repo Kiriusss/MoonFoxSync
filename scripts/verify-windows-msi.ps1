@@ -15,7 +15,38 @@ $exe = Join-Path $installDir '心狐同步.exe'
 $payload = '心狐同步.exe', '心狐同步.exe.config', 'kdrive.exe', 'kdrive-agent.exe'
 $links = [Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('DesktopDirectory') |
     ForEach-Object { Join-Path $_ '心狐同步.lnk' }
-$wsh = New-Object -ComObject WScript.Shell
+# Use the wide-character Shell Link API for Chinese paths on non-Chinese Windows.
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+
+public static class ShortcutInfo {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")] private class Link {}
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+        void GetIDList(out IntPtr list);
+        void SetIDList(IntPtr list);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder description, int count);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string description);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count);
+    }
+    public static string[] Read(string path) {
+        object instance = new Link();
+        try {
+            ((IPersistFile)instance).Load(path, 0);
+            var link = (IShellLinkW)instance;
+            var target = new StringBuilder(32768);
+            var directory = new StringBuilder(32768);
+            link.GetPath(target, target.Capacity, IntPtr.Zero, 0);
+            link.GetWorkingDirectory(directory, directory.Capacity);
+            return new string[] { target.ToString(), directory.ToString() };
+        } finally { Marshal.FinalReleaseComObject(instance); }
+    }
+}
+"@
 
 function Get-ProductCode($package, $expectedVersion) {
     $database = $installer.OpenDatabase((Convert-Path -LiteralPath $package), 0)
@@ -122,9 +153,9 @@ function Assert-Installed($code, $expectedVersion) {
     if ($appVersion -ne $expectedVersion) { throw "GUI version $appVersion differs from $expectedVersion" }
     foreach ($link in $links) {
         if (!(Test-Path -LiteralPath $link -PathType Leaf)) { throw "Missing $link" }
-        $shortcut = $wsh.CreateShortcut($link)
-        if ($shortcut.TargetPath -ne $exe -or $shortcut.WorkingDirectory.TrimEnd('\') -ne $installDir) {
-            throw "Invalid shortcut $link : $($shortcut.TargetPath) in $($shortcut.WorkingDirectory)"
+        $target, $directory = [ShortcutInfo]::Read($link)
+        if ($target -ne $exe -or $directory.TrimEnd('\') -ne $installDir) {
+            throw "Invalid shortcut $link : $target in $directory"
         }
     }
 }
