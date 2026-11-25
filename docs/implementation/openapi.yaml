@@ -1,0 +1,2357 @@
+openapi: 3.1.0
+info:
+  title: KiriusDrive 文件与快照 API
+  version: 1.0.0
+  description: |-
+    v1 接口契约。所有链路使用校验服务器身份的 HTTPS。路径相对于 /v1，时间为 RFC 3339 UTC，大小单位为字节；JSON 整数以跨端可精确表示的 2^53−1 为上限。
+    本机管理员签发配对码时指定单元和权限。reader 可列出已授权内容、历史及文件正文，sync 还可写入受管单元和取回对应快照的底层对象。每个请求重新核对设备状态、单元授权及资源归属，上传会话与归档记录另绑定创建设备。跨单元相同哈希只允许优化 NAS 内部落盘；协商、发布、对象读取均验证调用者在本单元对内容的引用权。
+    路径为区分大小写的原始 UTF-8 相对路径，根目录用空字符串。每段 1–255 个 UTF-8 字节，保留原 Unicode，不允许 NUL、绝对路径、空段、点与双点。URL 查询参数只解码一次。反斜杠是普通 POSIX 名称字符。读取和恢复不跟随符号链接；客户端负责呈现链接和目标端无法表示的路径。快照内目录项以单元、相对路径和快照版本寻址。
+    列表游标不透明，绑定设备、权限代次、查询及稳定的分页边界；到达末页 nextCursor=null。分页游标失效重新获取第一页；增量游标失效按 listUnits 的 syncCursor 全量对账。请求默认 JSON，原始对象与文件正文为八位字节流。认证、限流、容量和输入错误见 ApiError 的映射。
+servers:
+- url: /v1
+security:
+- deviceBearer: []
+tags:
+- name: 授权
+- name: 资料库
+- name: 上传
+- name: 历史
+- name: 读取
+- name: 归档保留
+paths:
+  /pair:
+    post:
+      operationId: pairDevice
+      tags:
+      - 授权
+      summary: 兑换一次性配对码
+      description: 管理员在 NAS 本机生成至少 128 位随机的一次性配对码，默认 10 分钟有效，指定单元及 reader/sync 权限，并显式授予可选的创建单元能力。客户端使用可信 TLS 连接，将已存入系统密钥库的随机设备令牌送达。服务端在同一事务中消费配对码并保存令牌校验值。响应丢失时可直接用令牌调用
+        listUnits 确认；凭据被撤销后返回 401。禁止在日志中记录 code、token、Authorization 和任意原始文件内容。
+      responses:
+        '201':
+          description: 设备已绑定。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PairResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PairRequest'
+      security: []
+  /units:
+    get:
+      operationId: listUnits
+      tags:
+      - 资料库
+      summary: 列出设备可访问的单元
+      description: 按 unitId 升序、同一状态边界分页，返回该边界的 syncCursor。全量对账时列完全部单元并固定各单元 head，再从此游标拉增量。external 单元 head=null，目录按需刷新。撤销授权使旧游标失效。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnitPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createUnit
+      tags:
+      - 资料库
+      summary: 创建受管单元
+      description: 要求 NAS 配对时由管理员额外授予 canCreateUnits；成功后设备获得新单元 sync 权限。(deviceId,requestId) 持久绑定请求和结果，重复同参返回相同单元，异参
+        409。existing/external 根目录仅 NAS 管理员本地登记。
+      responses:
+        '201':
+          description: 建成或重放原结果。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unit'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUnit'
+  /units/{unitId}/projects:
+    parameters:
+    - $ref: '#/components/parameters/UnitId'
+    get:
+      operationId: listSharedProjects
+      tags: [资料库]
+      summary: 列出共享空间的项目
+      description: 顶层受管资料库的同步设备可以枚举此空间，游标绑定设备及当前有效权限。
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 共享项目分页。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/SharedProject'}
+                  nextCursor:
+                    anyOf:
+                    - {$ref: '#/components/schemas/Cursor'}
+                    - {type: 'null'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+    post:
+      operationId: ensureSharedProject
+      tags: [资料库]
+      summary: 创建或加入共享项目
+      description: 每个空间内 key 唯一。多个设备或重试使用同一 key 时，服务返回已有 unitId 并保留第一次建立的显示名称。子项目沿用该空间的同步授权，管理员显式配置的子项目授权优先。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [key, name]
+              properties:
+                key: {type: string, pattern: '^[A-Za-z0-9._:-]{1,160}$'}
+                sourceKey: {type: string, pattern: '^git:[0-9a-f]{64}$', description: 用于推荐的 Git 来源指纹。}
+                name: {type: string, minLength: 1, maxLength: 255}
+      responses:
+        '200':
+          description: 已有项目。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SharedProject'}
+        '201':
+          description: 新建项目。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SharedProject'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+  /units/{unitId}/delete-plan:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    get:
+      operationId: previewLibraryDeletion
+      summary: 预览资料库及其子项目的删除范围
+      responses:
+        '200':
+          description: 管理设备可核对名称、范围和确认令牌。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [name, units, snapshots, devices, uploads, holds, token]
+                properties:
+                  name: {type: string}
+                  units: {type: integer}
+                  snapshots: {type: integer}
+                  devices: {type: integer}
+                  uploads: {type: integer}
+                  holds: {type: integer}
+                  token: {type: string}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+  /units/{unitId}/delete:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: deleteLibrary
+      summary: 按预览删除资料库、授权、版本和子项目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, token]
+              properties:
+                name: {type: string}
+                token: {type: string}
+      responses:
+        '200':
+          description: 数据库事务已提交，独占对象进入后台回收队列。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, units, snapshots]
+                properties:
+                  deleted: {type: boolean}
+                  units: {type: integer}
+                  snapshots: {type: integer}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+  /units/{unitId}/history-policy:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    get:
+      operationId: getHistoryPolicy
+      tags: [历史]
+      summary: 读取此资料库的保留规则
+      description: reader 和 sync 均可读取。初始策略为 all，value 为 0。
+      responses:
+        '200':
+          description: 读取此资料库的保留规则的结果。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/HistoryPolicy'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+    put:
+      operationId: setHistoryPolicy
+      tags: [历史]
+      summary: 保存并立即应用此资料库的保留规则
+      description: 需要 sync 授权。通过 expectedHead 可校验已预览的主线。服务端在同一事务内验证和重建受影响的时间点，再隐藏符合规则的历史。后续发布、合并、恢复与释放保留时会再次执行规则。按天数保留时还会在服务启动后和每 15 分钟检查。已经隐藏的时间点保持隐藏。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HistoryPolicyInput'}
+      responses:
+        '200':
+          description: 保存并立即应用此资料库的保留规则的结果。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/HistoryPolicy'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+        '507': {$ref: '#/components/responses/Error507'}
+  /units/{unitId}/history-policy/preview:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: previewHistoryPolicy
+      tags: [历史]
+      summary: 查看保留规则预计移除和保护的时间点数量
+      description: 需要 sync 授权。返回本次计算所用的 head，可用作设置策略时的 expectedHead。此请求只读。受保护的时间点在多个条件同时满足时计一次。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/HistoryPolicyInput'}
+      responses:
+        '200':
+          description: 查看保留规则预计移除和保护的时间点数量的结果。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/HistoryPolicyPreview'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+  /units/{unitId}/timeline/delete/preview:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: previewTimelineDelete
+      tags: [历史]
+      summary: 查看删除时间点及重建其他时间点的计划
+      description: 需要 sync 授权。计划列出每个受影响的可见时间点及重建前后的父版本。若所选点为当前主线、未合并分叉或有活动保留，返回 200 和 protectedReason。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TimelineSelection'}
+      responses:
+        '200':
+          description: 查看删除时间点及重建其他时间点的计划的结果。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TimelineDeletePreview'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+  /units/{unitId}/timeline/delete:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: deleteTimelinePoint
+      tags: [历史]
+      summary: 提交已预览的时间点删除与重建
+      description: 需要 sync 授权。事务内校验主线、保护状态和 planToken。主线或受影响的父关系已有变化时返回 409，客户端须重新预览。服务端验证幸存快照的对象闭包、重建公开父关系并隐藏所选点。原设备重试相同请求可取得原始回执。底层对象、发布记录和原始祖先关系仍保留。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TimelineDeleteInput'}
+      responses:
+        '200':
+          description: 提交已预览的时间点删除与重建的结果。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TimelineDeleteReceipt'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+        '507': {$ref: '#/components/responses/Error507'}
+  /units/{unitId}/timeline/restore:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: restoreTimelinePoint
+      tags: [历史]
+      summary: 从历史树发布一个新的主线时间点
+      description: 需要 sync 授权。所选点必须可见且属于该资料库。新快照引用所选点的树和附件，以确认的当前主线为父，并记录 restoredFromSnapshotId。操作只写 NAS。同一设备在此单元内重试相同 requestId 和参数会得到原始回执。使用相同编号提交不同参数或主线变化将返回 409。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TimelineRestoreInput'}
+      responses:
+        '200':
+          description: 从历史树发布一个新的主线时间点的结果。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+        '500': {$ref: '#/components/responses/Error500'}
+        '503': {$ref: '#/components/responses/Error503'}
+        '507': {$ref: '#/components/responses/Error507'}
+  /units/{unitId}/merge/plan:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: planMergeFork
+      tags: [历史]
+      summary: 预览主线与选定分叉的三方树合并
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [branchSnapshotId]
+              properties:
+                branchSnapshotId: {$ref: '#/components/schemas/Id'}
+      responses:
+        '200':
+          description: 可读设备可预览；alreadyMerged 指该分叉已在主线的祖先图中。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MergePlan'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+  /units/{unitId}/merge/commit:
+    parameters:
+    - {$ref: '#/components/parameters/UnitId'}
+    post:
+      operationId: commitMergeFork
+      tags: [历史]
+      summary: 在已复核主线上发布双父快照
+      description: 需要 sync 授权。事务内比较 mainHead，主线变化时返回 409。相同设备与单元的 requestId 持久绑定选择内容，重试返回同一回执。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mainHead, branchSnapshotId, requestId, choices]
+              properties:
+                mainHead: {$ref: '#/components/schemas/Id'}
+                branchSnapshotId: {$ref: '#/components/schemas/Id'}
+                requestId: {$ref: '#/components/schemas/Id'}
+                label: {type: string, maxLength: 500}
+                choices:
+                  type: array
+                  items:
+                    type: object
+                    required: [path, choice]
+                    properties:
+                      path: {type: string}
+                      choice: {enum: [main, branch, both, text]}
+                      text: {type: string, description: 手工合并 UTF-8 正文最多 128 KiB，无 NUL。}
+      responses:
+        '200':
+          description: 新的双父快照发布回执，重复请求返回原回执。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Receipt'}
+        '400': {$ref: '#/components/responses/Error400'}
+        '401': {$ref: '#/components/responses/Error401'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+        '409': {$ref: '#/components/responses/Error409'}
+  /units/{unitId}/uploads:
+    post:
+      operationId: beginUpload
+      tags:
+      - 上传
+      summary: 创建或恢复不可变上传会话
+      description: 仅 managed+sync。校验规则与权限。相同 (deviceId,requestId) 冻结同一份请求，重放返回相同状态，参数不同返回 409。clientSnapshotId 须在该单元唯一；过期会话使用新
+        requestId 可续用完全相同的快照语义字段与 ID，重新协商缺项；已发布则恢复其回执。规范化请求按字段值比较，省略的默认值与其显式默认值等价，数组顺序是内容的一部分。
+      responses:
+        '200':
+          description: 续用会话或回执。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upload'
+        '201':
+          description: 已建会话。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upload'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnapshotDraft'
+            example:
+              requestId: 01ARZ3NDEKTSV4RRFFQ69G5FA1
+              clientSnapshotId: 01ARZ3NDEKTSV4RRFFQ69G5FA2
+              parentSnapshotId: null
+              expectedHead: null
+              rootDigest: 7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1
+              scopeRevision: 1
+              capturedAt: '2026-11-25T02:00:00Z'
+              label: 命名检查点
+              checkpoint: true
+              links: []
+              attachments: []
+  /uploads/{uploadId}:
+    get:
+      operationId: getUpload
+      tags:
+      - 上传
+      summary: 获取会话状态和最终回执
+      description: 每次请求核实上传者身份与当前单元授权。open 会话最后一次成功会话操作后 7 天到期。finalized 回执在已发布记录或其墓碑中保留，可重复查询。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upload'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+  /uploads/{uploadId}/missing:
+    post:
+      operationId: findMissingObjects
+      tags:
+      - 上传
+      summary: 按页协商缺少的对象
+      description: 每次至多 256 个 offer。授权设备在本单元可引用或已在本会话持久确认的对象可复用；其他单元已有的对象仍要求传入验证。返回已登记本页的缺项，重复调用可获最新结果。客户端从不可变本地清单自行切页。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MissingResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '413':
+          $ref: '#/components/responses/Error413'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MissingRequest'
+            example:
+              objects:
+              - kind: tree
+                digest: 7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1
+                size: 8
+  /uploads/{uploadId}/objects/{digest}:
+    put:
+      operationId: storeObject
+      tags:
+      - 上传
+      summary: 上传原始对象
+      description: kind 指定 chunk、file 或 tree；精确定义见 同目录《02-存储与版本.md》中的存储格式。先登记本会话 offer；实际收到的原始长度和 SHA-256 必须匹配。最大原始长度
+        4 MiB，响应前持久化对象和会话引用。断开后可重传或再次协商。
+      responses:
+        '204':
+          description: 对象已持久化或此前已确认。
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '413':
+          $ref: '#/components/responses/Error413'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+      - $ref: '#/components/parameters/Digest'
+      - $ref: '#/components/parameters/ObjectKind'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+  /uploads/{uploadId}/batch:
+    post:
+      operationId: storeBatch
+      tags:
+      - 上传
+      summary: 批量提交小对象
+      description: items 中每项是标准有填充 base64；最多 256 个对象、解码数据合计 ≤4 MiB，JSON 正文 ≤6 MiB。已登记 offer 的每项单独校验并持久化。整批语法或大小错误时拒绝；逐项结果保持输入顺序，no_space/transient
+        可重试。连接中断重新协商，有回执的项保持持久。流量账本按实际线上应用数据计量，含编码开销。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResult'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '413':
+          $ref: '#/components/responses/Error413'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchRequest'
+            example:
+              items:
+              - kind: tree
+                digest: 7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1
+                data: S0RUTAAAAAA=
+  /uploads/{uploadId}/finalize:
+    post:
+      operationId: finalizeUpload
+      tags:
+      - 上传
+      summary: 提交完整引用闭包并返回持久回执
+      description: 会话 ID 同时是幂等键；finalize 无请求正文。核对 rootDigest、所有后代块与文件整摘要、附件、同单元父版本及被挂载的确切版本和读取权限。缺父/缺对象返回 409，open 会话可继续补传；坏摘要返回
+        422。CAS 条件 head == expectedHead 才能推进主线；实际 head 不同或父为分叉时保存 fork 并返回 200。显式解决分叉应以最新主线为父，resolvedForkSnapshotId
+        指向已知分叉；主线再次前进仍保存为 fork。发布快照/分叉、receipt、变更号原子生效。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+              example:
+                unitId: 01ARZ3NDEKTSV4RRFFQ69G5FA0
+                snapshotId: 01ARZ3NDEKTSV4RRFFQ69G5FA2
+                rootDigest: 7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1
+                outcome: published
+                headAtCommit: 01ARZ3NDEKTSV4RRFFQ69G5FA2
+                committedAt: '2026-11-25T02:00:01Z'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UploadId'
+  /changes:
+    get:
+      operationId: listChanges
+      tags:
+      - 历史
+      summary: 读取授权单元的增量事件
+      description: 首次启动客户端从 listUnits 的 syncCursor 开始；省略 cursor 表示从当前时刻订阅，只返回当前高水位和空集合。每批按服务端提交顺序。客户端持久保存全部事件后才推进 cursor，允许重复应用。无事件也返回可继续使用的
+        cursor；hasMore=true 立即续取。授权变化或授权范围内发生时间点删除（含策略修剪）时，旧游标返回 410 CURSOR_EXPIRED。客户端应重新列举单元与可见历史，取得新的 syncCursor 后继续。external 文件系统不提供逐项变化事件。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Changes'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /units/{unitId}/snapshots:
+    get:
+      operationId: listSnapshots
+      tags:
+      - 历史
+      summary: 列出主线与并发版本
+      description: 仅受管单元。按服务端提交序号倒序；固定分页边界，包含可见主线与已保存的 fork。授权范围内有历史删除时，旧分页游标返回 410 CURSOR_EXPIRED，客户端应从第一页重新列举。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/ReadKinds'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /units/{unitId}/snapshots/{snapshotId}:
+    get:
+      operationId: getSnapshot
+      tags:
+      - 历史
+      summary: 取回冻结的快照元数据
+      description: 包含完整根树摘要、附件和挂载版本的定位信息。对于失去子单元授权的调用者从响应中移除对应 links，目录导航不能跨越授权边界。删除和裁剪会隐藏快照详情、目录、正文、对象、附件、差异及预览，直接读取返回 404。重建的时间点在响应中提供可见的父版本列表，底层原始父关系继续用于分叉合并。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - name: fingerprint
+        in: query
+        required: false
+        schema: {type: boolean, default: false}
+        description: 请求 contentDigest，核对不同电脑上时间戳不同的相同工作树。
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/SnapshotId'
+  /units/{unitId}/snapshots/{snapshotId}/objects/{digest}:
+    get:
+      operationId: readSnapshotObject
+      tags:
+      - 读取
+      summary: 下载授权快照中的清单节点或数据块
+      description: 仅 sync。每次核实 (kind,digest) 属于该快照根目录或 Git 附件的传递闭包。链接的子单元使用其自身的授权端点。返回规范字节供整树/子树恢复、符号链接、执行位、空目录及块级增量下载；响应体最长
+        4 MiB，验证长度与摘要。
+      responses:
+        '200':
+          description: 规范对象原始字节。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                $ref: '#/components/schemas/ETag'
+              description: 双引号包裹的对象摘要。
+              required: true
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/SnapshotId'
+      - $ref: '#/components/parameters/Digest'
+      - $ref: '#/components/parameters/ObjectKind'
+  /units/{unitId}/merge/preview:
+    get:
+      operationId: previewMergeMember
+      summary: 预览冻结版本中的单个成员，文本最多读取前 128 KiB
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - {name: snapshotId, in: query, required: true, schema: {type: string}}
+      - {name: path, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: 返回成员类型及截断状态，普通 UTF-8 文本可直接供三方比较。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [kind, truncated]
+                properties:
+                  kind: {type: string, enum: [text, binary, directory, symlink, missing]}
+                  truncated: {type: boolean}
+                  size: {type: integer}
+                  text: {type: string}
+                  target: {type: string}
+        '400': {$ref: '#/components/responses/Error400'}
+        '403': {$ref: '#/components/responses/Error403'}
+        '404': {$ref: '#/components/responses/Error404'}
+  /units/{unitId}/diff:
+    get:
+      operationId: diffSnapshots
+      tags:
+      - 历史
+      summary: 分页列出两次快照的路径变化
+      description: 比较同一单元内任意两次可读快照。结果按路径 UTF-8 字节序升序，可识别且无歧义的移动含 oldPath；无法确定来源时列为新增和删除。文本逐行比对通过读取两个冻结版本完成。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiffPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/From'
+      - $ref: '#/components/parameters/To'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /units/{unitId}/entries:
+    get:
+      operationId: listEntries
+      tags:
+      - 读取
+      summary: 分页浏览指定目录
+      description: managed 显式指定 snapshotId，external 省略。按直接子项原始名称 UTF-8 字节序升序；不得预下载文件正文。size 是文件逻辑长度，目录可为 null。符号链接按链接展示，不跟随。目录项
+        path 是本单元根相对路径；挂载子单元有独立授权时才返回导航信息。external 枚举锁定同一次目录索引/稳定列表；目录已变而分页边界不可保持时返回 409 DIRECTORY_CHANGED，应重列该目录。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntryPage'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '410':
+          $ref: '#/components/responses/Error410'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/RelativePath'
+      - $ref: '#/components/parameters/SnapshotQuery'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+  /units/{unitId}/snapshots/{snapshotId}/attachments/{name}:
+    get:
+      operationId: readAttachment
+      tags:
+      - 读取
+      summary: 流式下载快照所选的 Git 历史附件
+      description: 仅 sync。按本单元及确切版本的 attachments 映射解析名称，读取已校验并持久化的 fileDigest 文件清单；ETag 为重组后附件完整字节的 SHA-256。重建时先校验 Git
+        bundle，再在新目录还原仓库；范围和版本预条件同 readFile。
+      responses:
+        '200':
+          description: 完整附件。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                enum:
+                - bytes
+              description: bytes。
+              required: true
+            ETag:
+              schema:
+                $ref: '#/components/schemas/ETag'
+              description: 该版本完整文件字节的强 ETag。
+              required: true
+            Content-Length:
+              schema:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+              description: 本次实际响应字节数。
+              required: true
+        '206':
+          description: 附件的单范围。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                enum:
+                - bytes
+              description: bytes。
+              required: true
+            ETag:
+              schema:
+                $ref: '#/components/schemas/ETag'
+              description: 该版本完整文件字节的强 ETag。
+              required: true
+            Content-Length:
+              schema:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+              description: 本次实际响应字节数。
+              required: true
+            Content-Range:
+              schema:
+                type: string
+              description: bytes start-end/total。
+              required: true
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '412':
+          $ref: '#/components/responses/Error412'
+        '416':
+          $ref: '#/components/responses/Error416'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/SnapshotId'
+      - $ref: '#/components/parameters/AttachmentName'
+      - $ref: '#/components/parameters/Range'
+      - $ref: '#/components/parameters/IfMatch'
+  /units/{unitId}/content:
+    get:
+      operationId: readFile
+      tags:
+      - 读取
+      summary: 读取整个文件或一段内容
+      description: managed 必须指定 snapshotId，依有序块返回该快照的文件正文。external 由管理员注册的根目录内解析；使用受限目录句柄并拒绝跟随符号链接。生成可靠的一致源视图（文件系统快照或可验证的不可变临时副本）并取得强
+        ETag；无法获得稳定副本则 409。每次响应绑定该视图，续传 external 必须同时带上次 ETag 的 If-Match 和 Range；来源变更返回 412，保持分段下载一致。允许首次 Range 不附 If-Match
+        以建立新下载。Range 只支持单区间，越界/多个区间返回 416 和 Content-Range。目录和符号链接没有该文件正文。
+      responses:
+        '200':
+          description: 完整文件。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                enum:
+                - bytes
+              description: bytes。
+              required: true
+            ETag:
+              schema:
+                $ref: '#/components/schemas/ETag'
+              description: 该版本完整文件字节的强 ETag。
+              required: true
+            Content-Length:
+              schema:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+              description: 本次实际响应字节数。
+              required: true
+        '206':
+          description: 请求范围。
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+                enum:
+                - bytes
+              description: bytes。
+              required: true
+            ETag:
+              schema:
+                $ref: '#/components/schemas/ETag'
+              description: 该版本完整文件字节的强 ETag。
+              required: true
+            Content-Length:
+              schema:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+              description: 本次实际响应字节数。
+              required: true
+            Content-Range:
+              schema:
+                type: string
+              description: bytes start-end/total。
+              required: true
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '412':
+          $ref: '#/components/responses/Error412'
+        '416':
+          $ref: '#/components/responses/Error416'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/RelativePath'
+      - $ref: '#/components/parameters/SnapshotQuery'
+      - $ref: '#/components/parameters/Range'
+      - $ref: '#/components/parameters/IfMatch'
+  /units/{unitId}/holds/{holdId}:
+    put:
+      operationId: acquireHold
+      tags:
+      - 归档保留
+      summary: 核验版本并登记持久保留引用
+      description: 要求 managed+sync，holdId 由客户端先持久保存，绑定单元、设备和请求。NAS 确认范围存在，按存储规范核实所需数据完整可读，事务中建立保留引用。根目录 path 为空，v1 可保守保护整份快照，包含引用的附件与固定子版本；跨单元目标也要有相应授权。收到
+        active 后本机才能继续执行回收步骤。重复同参返回相同记录，异参或试图复用 released ID 返回 409。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hold'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '409':
+          $ref: '#/components/responses/Error409'
+        '422':
+          $ref: '#/components/responses/Error422'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/HoldId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HoldSpec'
+            example:
+              snapshotId: 01ARZ3NDEKTSV4RRFFQ69G5FA2
+              path: ''
+    get:
+      operationId: getHold
+      tags:
+      - 归档保留
+      summary: 查验当前设备的归档保留记录
+      description: 用于回收中断恢复。当前设备需仍有单元权限；设备撤销不自动删除长期保留引用，本机管理员可管理孤立引用。
+      responses:
+        '200':
+          description: 成功。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hold'
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/HoldId'
+    delete:
+      operationId: releaseHold
+      tags:
+      - 归档保留
+      summary: 解除当前设备创建的引用
+      description: 用户主动解除长期保留时使用；客户端先确认仍需保留的版本已有对应持久副本或其他引用。成功记录 released 墓碑，后续相同请求仍返回 204。操作与桌面释放本机空间相互独立；释放本机空间需要 acquireHold。
+      responses:
+        '204':
+          description: 已解除。
+        '400':
+          $ref: '#/components/responses/Error400'
+        '401':
+          $ref: '#/components/responses/Error401'
+        '403':
+          $ref: '#/components/responses/Error403'
+        '404':
+          $ref: '#/components/responses/Error404'
+        '429':
+          $ref: '#/components/responses/Error429'
+        '500':
+          $ref: '#/components/responses/Error500'
+        '503':
+          $ref: '#/components/responses/Error503'
+        '507':
+          $ref: '#/components/responses/Error507'
+      parameters:
+      - $ref: '#/components/parameters/UnitId'
+      - $ref: '#/components/parameters/HoldId'
+components:
+  securitySchemes:
+    deviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque device secret
+  parameters:
+    UnitId:
+      name: unitId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: unitId
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: uploadId
+    SnapshotId:
+      name: snapshotId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: snapshotId
+    HoldId:
+      name: holdId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: holdId
+    Digest:
+      name: digest
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Digest'
+      description: 原始对象字节的 SHA-256。
+    ObjectKind:
+      name: kind
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/ObjectKind'
+      description: 同一摘要可用作不同类型，类型和摘要共同标识对象。
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Cursor'
+      description: 上一页的 nextCursor；changes 使用上次已完整应用的 cursor。
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 256
+        default: 100
+      description: 最大条数。
+    RelativePath:
+      name: path
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/Path'
+      description: UTF-8 相对路径，根目录使用 ?path=。
+      allowEmptyValue: true
+    SnapshotQuery:
+      name: snapshotId
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: managed 必传不可变快照 ID；external 省略。
+    Range:
+      name: Range
+      in: header
+      required: false
+      schema:
+        type: string
+        pattern: ^bytes=([0-9]+-[0-9]*|-[0-9]+)$
+      description: 单范围，单位字节。
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema:
+        $ref: '#/components/schemas/ETag'
+      description: 从上次响应获取的强实体标记，恢复中断读取必须携带。
+    From:
+      name: from
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: 基线快照。
+    To:
+      name: to
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+      description: 目标快照。
+    ReadKinds:
+      name: kind
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+        - all
+        - published
+        - fork
+      description: 默认 all。
+    AttachmentName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9_-][A-Za-z0-9._-]*$
+        maxLength: 255
+      description: 本快照内唯一的附件名，单一 ASCII 段。
+  responses:
+    Error400:
+      description: BAD_REQUEST
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error401:
+      description: UNAUTHENTICATED
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error403:
+      description: FORBIDDEN
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error404:
+      description: NOT_FOUND
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error409:
+      description: CONFLICT / PARENT_MISSING / OBJECTS_MISSING / DIRECTORY_CHANGED
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error410:
+      description: CURSOR_EXPIRED 表示需从头列举可见状态，包括权限变化或授权范围内的历史删除。SESSION_EXPIRED 表示上传会话已过期。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error412:
+      description: SOURCE_CHANGED
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error413:
+      description: TOO_LARGE
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error416:
+      description: RANGE_INVALID
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+      headers:
+        Content-Range:
+          schema:
+            type: string
+          description: bytes */完整大小。
+          required: true
+    Error422:
+      description: INVALID_OBJECT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error429:
+      description: RATE_LIMITED
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+      headers:
+        Retry-After:
+          schema:
+            type: string
+          description: 建议的等待秒数。
+          required: false
+    Error500:
+      description: INTERNAL
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+    Error503:
+      description: VOLUME_UNAVAILABLE
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+      headers:
+        Retry-After:
+          schema:
+            type: string
+          description: 建议的等待秒数。
+          required: false
+    Error507:
+      description: INSUFFICIENT_SPACE
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+  schemas:
+    Id:
+      type: string
+      pattern: ^[0-7][0-9A-HJKMNP-TV-Z]{25}$
+      description: 大写 Crockford Base32 ULID。
+    Digest:
+      type: string
+      pattern: ^[0-9a-f]{64}$
+      description: SHA-256 原始字节的小写十六进制。
+    ETag:
+      type: string
+      pattern: ^"[0-9a-f]{64}"$
+      description: 强实体标记。HTTP 头包含一对双引号。
+    Cursor:
+      type: string
+      minLength: 1
+      maxLength: 2048
+    Path:
+      type: string
+      description: 原始相对路径，根为空串。组件约束见协议说明。
+    ByteCount:
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+    UnitKind:
+      type: string
+      enum:
+      - managed
+      - external
+    Role:
+      type: string
+      enum:
+      - reader
+      - sync
+    ObjectKind:
+      type: string
+      enum:
+      - chunk
+      - file
+      - tree
+    RequestId:
+      $ref: '#/components/schemas/Id'
+    ObjectRef:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: '#/components/schemas/ObjectKind'
+        digest:
+          $ref: '#/components/schemas/Digest'
+      required:
+      - kind
+      - digest
+    Offer:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: '#/components/schemas/ObjectKind'
+        digest:
+          $ref: '#/components/schemas/Digest'
+        size:
+          type: integer
+          minimum: 0
+          maximum: 4194304
+      required:
+      - kind
+      - digest
+      - size
+    Link:
+      type: object
+      additionalProperties: false
+      properties:
+        mountPath:
+          $ref: '#/components/schemas/Path'
+        unitId:
+          $ref: '#/components/schemas/Id'
+        snapshotId:
+          $ref: '#/components/schemas/Id'
+      required:
+      - mountPath
+      - unitId
+      - snapshotId
+    Attachment:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum:
+          - git-bundle
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: ^[A-Za-z0-9_-][A-Za-z0-9._-]*$
+        fileDigest:
+          $ref: '#/components/schemas/Digest'
+      required:
+      - kind
+      - name
+      - fileDigest
+    ApiError:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          enum:
+          - BAD_REQUEST
+          - UNAUTHENTICATED
+          - FORBIDDEN
+          - NOT_FOUND
+          - CONFLICT
+          - PARENT_MISSING
+          - OBJECTS_MISSING
+          - DIRECTORY_CHANGED
+          - SESSION_EXPIRED
+          - CURSOR_EXPIRED
+          - SOURCE_CHANGED
+          - TOO_LARGE
+          - RANGE_INVALID
+          - INVALID_OBJECT
+          - RATE_LIMITED
+          - INTERNAL
+          - VOLUME_UNAVAILABLE
+          - INSUFFICIENT_SPACE
+        message:
+          type: string
+        action:
+          type: string
+          enum:
+          - fix_request
+          - reauthenticate
+          - stop
+          - retry
+          - upload_missing
+          - upload_parent
+          - restart_session
+          - relist
+          - refresh_source
+          - wait_for_space
+        missing:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObjectRef'
+          maxItems: 256
+      required:
+      - code
+      - message
+      - action
+      description: 400 输入；401 无凭据、设备撤销或配对失败；403 角色不足；404 资源不存在或不在授权范围；409 幂等键复用、父快照未发布、闭包不完整或目录改变；410 游标/会话过期；412 If-Match
+        已过期；413 大小超限；416 单范围无效；422 内容摘要或清单结构不符；429 限流；500 内部错误；503 卷不可用；507 空间不足。缺项分页通过重复协商/补齐实现。客户端依据 action 选择重试策略，重试保持原幂等键。
+    PairRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 20
+          maxLength: 128
+          writeOnly: true
+        deviceId:
+          $ref: '#/components/schemas/Id'
+        deviceName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        token:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{43}$
+          writeOnly: true
+          description: 客户端在系统密钥存储生成的 32 随机字节，按无填充 base64url 编码。
+      required:
+      - code
+      - deviceId
+      - deviceName
+      - token
+    PairResult:
+      type: object
+      additionalProperties: false
+      properties:
+        deviceId:
+          $ref: '#/components/schemas/Id'
+        canCreateUnits:
+          type: boolean
+      required:
+      - deviceId
+      - canCreateUnits
+    HistoryPolicy:
+      type: object
+      required: [mode, value]
+      properties:
+        mode: {type: string, enum: [all, latest, days]}
+        value: {type: integer}
+      oneOf:
+      - properties: {mode: {const: all}, value: {const: 0}}
+      - properties: {mode: {const: latest}, value: {minimum: 1, maximum: 10000}}
+      - properties: {mode: {const: days}, value: {minimum: 1, maximum: 3650}}
+      description: all 保留全部。latest 按 NAS 提交顺序计数，当前主线占一项，活动保留和未合并分叉得到额外保护。days 按 NAS 提交时间和滚动 24 小时计算。
+    HistoryPolicyInput:
+      allOf:
+      - {$ref: '#/components/schemas/HistoryPolicy'}
+      - type: object
+        properties:
+          expectedHead:
+            anyOf: [{$ref: '#/components/schemas/Id'}, {const: ''}]
+            description: 可选的当前主线校验值。空资料库使用空字符串。
+      unevaluatedProperties: false
+    HistoryPolicyPreview:
+      allOf:
+      - {$ref: '#/components/schemas/HistoryPolicy'}
+      - type: object
+        required: [protectedCount, removeCount, head]
+        properties:
+          protectedCount: {type: integer, minimum: 0, description: 当前主线、活动保留及未合并分叉去重后的总数。}
+          removeCount: {type: integer, minimum: 0, description: 按预览时状态应用此规则会从时间线移除的点数。}
+          head: {anyOf: [{$ref: '#/components/schemas/Id'}, {const: ''}]}
+    TimelineSelection:
+      type: object
+      required: [snapshotId, expectedHead]
+      properties:
+        snapshotId: {$ref: '#/components/schemas/Id'}
+        expectedHead: {$ref: '#/components/schemas/Id'}
+    TimelineDeleteInput:
+      allOf:
+      - {$ref: '#/components/schemas/TimelineSelection'}
+      - type: object
+        required: [planToken]
+        properties:
+          planToken: {$ref: '#/components/schemas/Digest'}
+      unevaluatedProperties: false
+    TimelineRestoreInput:
+      allOf:
+      - {$ref: '#/components/schemas/TimelineSelection'}
+      - type: object
+        required: [requestId]
+        properties:
+          requestId: {$ref: '#/components/schemas/Id'}
+          label: {type: string, maxLength: 500, default: ''}
+      unevaluatedProperties: false
+    RebuiltTimelinePoint:
+      type: object
+      required: [snapshotId, label, parentsBefore, parentsAfter]
+      properties:
+        snapshotId: {$ref: '#/components/schemas/Id'}
+        label: {type: string}
+        parentsBefore: {type: array, items: {$ref: '#/components/schemas/Id'}}
+        parentsAfter: {type: array, items: {$ref: '#/components/schemas/Id'}}
+    TimelineDeletePreview:
+      allOf:
+      - {$ref: '#/components/schemas/TimelineSelection'}
+      - type: object
+        required: [planToken, rebuiltPoints]
+        properties:
+          planToken:
+            anyOf: [{$ref: '#/components/schemas/Digest'}, {const: ''}]
+            description: 用于提交该次删除的计划编号。受保护的时间点返回空字符串。
+          protectedReason: {type: string, description: 保护当前时间点的原因，出现时不能提交本次删除。}
+          rebuiltPoints: {type: array, items: {$ref: '#/components/schemas/RebuiltTimelinePoint'}}
+    TimelineDeleteReceipt:
+      type: object
+      required: [snapshotId, deleted, rebuiltPoints]
+      properties:
+        snapshotId: {$ref: '#/components/schemas/Id'}
+        deleted: {const: true}
+        rebuiltPoints: {type: array, items: {$ref: '#/components/schemas/RebuiltTimelinePoint'}}
+    MergePlan:
+      type: object
+      required: [unitId, mainHead, branchSnapshotId, baseSnapshotId, alreadyMerged, conflicts, autoPaths]
+      properties:
+        unitId: {$ref: '#/components/schemas/Id'}
+        mainHead: {$ref: '#/components/schemas/Id'}
+        branchSnapshotId: {$ref: '#/components/schemas/Id'}
+        baseSnapshotId: {type: string, description: 独立根使用空字符串。}
+        alreadyMerged: {type: boolean}
+        baseHidden: {type: boolean, default: false, description: 共同祖先已从时间线移除。服务端仍按原始祖先计算差异，直接访问祖先的正文或预览返回 404。}
+        baseAmbiguous: {type: boolean, description: 有多个最近共同祖先时，差异要求手工选择。}
+        autoPaths: {type: array, items: {type: string}}
+        conflicts:
+          type: array
+          items:
+            type: object
+            required: [path, baseKind, mainKind, branchKind, bothPath, textAllowed]
+            properties:
+              path: {type: string}
+              baseKind: {enum: [file, directory, symlink, missing]}
+              mainKind: {enum: [file, directory, symlink, missing]}
+              branchKind: {enum: [file, directory, symlink, missing]}
+              bothPath: {type: string, description: 保留两份时分叉副本路径；空字符串表示不可选。}
+              textAllowed: {type: boolean}
+    SharedProject:
+      type: object
+      required: [unitId, scopeId, key, name, head]
+      properties:
+        unitId: {$ref: '#/components/schemas/Id'}
+        scopeId: {$ref: '#/components/schemas/Id'}
+        key: {type: string}
+        sourceKey: {type: string}
+        name: {type: string}
+        head:
+          anyOf:
+          - {$ref: '#/components/schemas/Id'}
+          - {type: 'null'}
+        created: {type: boolean}
+    Unit:
+      type: object
+      additionalProperties: false
+      properties:
+        scopeId: {$ref: '#/components/schemas/Id'}
+        projectKey: {type: string}
+        unitId:
+          $ref: '#/components/schemas/Id'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        kind:
+          $ref: '#/components/schemas/UnitKind'
+        role:
+          $ref: '#/components/schemas/Role'
+        head:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      required:
+      - unitId
+      - name
+      - kind
+      - role
+      - head
+    CreateUnit:
+      type: object
+      additionalProperties: false
+      properties:
+        requestId:
+          $ref: '#/components/schemas/RequestId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+      required:
+      - requestId
+      - name
+    UnitPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Unit'
+        nextCursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        syncCursor:
+          $ref: '#/components/schemas/Cursor'
+      required:
+      - items
+      - nextCursor
+      - syncCursor
+    SnapshotDraft:
+      type: object
+      additionalProperties: false
+      properties:
+        requestId:
+          $ref: '#/components/schemas/RequestId'
+        clientSnapshotId:
+          $ref: '#/components/schemas/Id'
+        parentSnapshotId:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        baseContentDigest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: 本机绑定时已观察到的基线内容指纹。跨设备提交到共享项目时用于核对已有远端父版本；缺少指纹或指纹不符且内容发生变化时保留分叉。
+        expectedHead:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        rootDigest:
+          $ref: '#/components/schemas/Digest'
+        scopeRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        capturedAt:
+          type: string
+          format: date-time
+        label:
+          type: string
+          maxLength: 500
+        gitHead:
+          type: string
+          pattern: ^([0-9a-f]{40}|[0-9a-f]{64})$
+        gitBranch:
+          type: string
+          maxLength: 1024
+        checkpoint:
+          type: boolean
+          default: false
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        resolvedForkSnapshotId:
+          $ref: '#/components/schemas/Id'
+      required:
+      - requestId
+      - clientSnapshotId
+      - parentSnapshotId
+      - expectedHead
+      - rootDigest
+      - scopeRevision
+      - capturedAt
+      - label
+      - links
+      - attachments
+      description: parentSnapshotId 和 expectedHead 相同；首版两者均为 null。串行离线检查点先发布父，再发布子。快照身份为 (unitId, clientSnapshotId)，所有内容字段在该身份下不可变。显式接受并发版本可从最新主线创建合并结果，另以
+        resolvedForkSnapshotId 记录来源。scopeRevision 是 (unitId, deviceId) 内的正整数规则标签，允许不同设备复用数值、较旧标签迟到；记录冻结值和清单，无需登记全局修订，权限始终取自
+        NAS。恢复以冻结的清单为准。
+    Receipt:
+      type: object
+      additionalProperties: false
+      properties:
+        unitId:
+          $ref: '#/components/schemas/Id'
+        snapshotId:
+          $ref: '#/components/schemas/Id'
+        rootDigest:
+          $ref: '#/components/schemas/Digest'
+        outcome:
+          type: string
+          enum:
+          - published
+          - fork
+        headAtCommit:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        committedAt:
+          type: string
+          format: date-time
+      required:
+      - unitId
+      - snapshotId
+      - rootDigest
+      - outcome
+      - headAtCommit
+      - committedAt
+    Upload:
+      type: object
+      additionalProperties: false
+      properties:
+        uploadId:
+          $ref: '#/components/schemas/Id'
+        unitId:
+          $ref: '#/components/schemas/Id'
+        clientSnapshotId:
+          $ref: '#/components/schemas/Id'
+        state:
+          type: string
+          enum:
+          - open
+          - finalized
+        receipt:
+          anyOf:
+          - $ref: '#/components/schemas/Receipt'
+          - type: 'null'
+        expiresAt:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+      required:
+      - uploadId
+      - unitId
+      - clientSnapshotId
+      - state
+      - receipt
+      - expiresAt
+    MissingRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        objects:
+          type: array
+          items:
+            $ref: '#/components/schemas/Offer'
+          minItems: 1
+          maxItems: 256
+      required:
+      - objects
+    MissingResult:
+      type: object
+      additionalProperties: false
+      properties:
+        missing:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObjectRef'
+          maxItems: 256
+      required:
+      - missing
+    BatchItem:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: '#/components/schemas/ObjectKind'
+        digest:
+          $ref: '#/components/schemas/Digest'
+        data:
+          type: string
+          contentEncoding: base64
+          maxLength: 5592408
+      required:
+      - kind
+      - digest
+      - data
+    BatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchItem'
+          minItems: 1
+          maxItems: 256
+      required:
+      - items
+    BatchOutcome:
+      type: object
+      additionalProperties: false
+      properties:
+        object:
+          $ref: '#/components/schemas/ObjectRef'
+        status:
+          type: string
+          enum:
+          - stored
+          - exists
+          - invalid
+          - no_space
+          - transient
+      required:
+      - object
+      - status
+    BatchResult:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchOutcome'
+          minItems: 1
+          maxItems: 256
+      required:
+      - items
+    Snapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        timelineParentSnapshotIds:
+          type: array
+          items: {$ref: '#/components/schemas/Id'}
+          description: 重建后的完整可见父版本列表。首项映射到 parentSnapshotId，第二项映射到 mergeParentSnapshotId。重建后可能有两个以上父版本，也可能成为可见根。
+        timelineRebuilt: {type: boolean, description: 此时间点已建立独立的可见父关系。}
+        restoredFromSnapshotId:
+          $ref: '#/components/schemas/Id'
+          description: 从历史恢复时指向创建此新快照所用的源时间点。
+        mergeParentSnapshotId: {$ref: '#/components/schemas/Id'}
+        contentDigest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: fingerprint=true 时返回的规范化树摘要，保留成员路径、类型、内容、可执行位和符号链接目标，各条目 mtime 按零计算。
+        snapshotId:
+          $ref: '#/components/schemas/Id'
+        unitId:
+          $ref: '#/components/schemas/Id'
+        parentSnapshotId:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        rootDigest:
+          $ref: '#/components/schemas/Digest'
+        deviceId:
+          $ref: '#/components/schemas/Id'
+        scopeRevision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        capturedAt:
+          type: string
+          format: date-time
+        committedAt:
+          type: string
+          format: date-time
+        label:
+          type: string
+        checkpoint:
+          type: boolean
+        outcome:
+          type: string
+          enum:
+          - published
+          - fork
+        resolvedForkSnapshotId:
+          $ref: '#/components/schemas/Id'
+        gitHead:
+          type: string
+        gitBranch:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+      required:
+      - snapshotId
+      - unitId
+      - parentSnapshotId
+      - rootDigest
+      - deviceId
+      - scopeRevision
+      - capturedAt
+      - committedAt
+      - label
+      - checkpoint
+      - outcome
+      - attachments
+      - links
+    SnapshotPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Snapshot'
+        nextCursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+      required:
+      - items
+      - nextCursor
+    Change:
+      type: object
+      additionalProperties: false
+      properties:
+        unitId:
+          $ref: '#/components/schemas/Id'
+        type:
+          type: string
+          enum:
+          - unit_created
+          - snapshot_published
+          - fork_saved
+        snapshotId:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      required:
+      - unitId
+      - type
+      - snapshotId
+    Changes:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Change'
+        cursor:
+          $ref: '#/components/schemas/Cursor'
+        hasMore:
+          type: boolean
+      required:
+      - items
+      - cursor
+      - hasMore
+    Entry:
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          $ref: '#/components/schemas/Path'
+        kind:
+          type: string
+          enum:
+          - file
+          - directory
+          - symlink
+          - mount
+        size:
+          anyOf:
+          - $ref: '#/components/schemas/ByteCount'
+          - type: 'null'
+        mtime:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        executable:
+          type: boolean
+        target:
+          type: string
+        digest:
+          $ref: '#/components/schemas/Digest'
+        mount:
+          $ref: '#/components/schemas/Link'
+      required:
+      - path
+      - kind
+      - size
+      - mtime
+    EntryPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Entry'
+        nextCursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshotId:
+          anyOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      required:
+      - items
+      - nextCursor
+      - snapshotId
+    Diff:
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          $ref: '#/components/schemas/Path'
+        status:
+          type: string
+          enum:
+          - added
+          - deleted
+          - modified
+          - moved
+        oldPath:
+          $ref: '#/components/schemas/Path'
+      required:
+      - path
+      - status
+    DiffPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diff'
+        nextCursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+      required:
+      - items
+      - nextCursor
+    HoldSpec:
+      type: object
+      additionalProperties: false
+      properties:
+        snapshotId:
+          $ref: '#/components/schemas/Id'
+        path:
+          $ref: '#/components/schemas/Path'
+      required:
+      - snapshotId
+      - path
+    Hold:
+      type: object
+      additionalProperties: false
+      properties:
+        holdId:
+          $ref: '#/components/schemas/Id'
+        unitId:
+          $ref: '#/components/schemas/Id'
+        snapshotId:
+          $ref: '#/components/schemas/Id'
+        path:
+          $ref: '#/components/schemas/Path'
+        deviceId:
+          $ref: '#/components/schemas/Id'
+        state:
+          type: string
+          enum:
+          - active
+          - released
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - holdId
+      - unitId
+      - snapshotId
+      - path
+      - deviceId
+      - state
+      - createdAt
+x-conformance-example:
+  name: 空项目的首次发布与回执重试
+  preconditions: 已有 managed 空单元，已配对的桌面设备具有该单元 sync 权限。测试使用各操作 application/json.example 的请求。
+  sequence:
+  - beginUpload → 201；保留 uploadId。
+  - findMissingObjects → 200，首次协商缺少 tree。
+  - storeBatch → 200，8 字节空树内容已持久确认。
+  - finalizeUpload → 200 published；故意丢弃回复，再次 finalizeUpload 得到逐字段相同回执。
+  - listEntries(path 为空串、snapshotId 为刚发布 ID) → items=[]。
+  - 从原基线 null 再发布另一个检查点 ID → fork，主线仍引用第一份快照。

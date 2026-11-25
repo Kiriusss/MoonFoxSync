@@ -1,0 +1,275 @@
+{
+  "formatVersion": 1,
+  "description": "协议联调金样。预置空 managed 单元，writer/reader 均获该单元对应授权。样例 ID 固定；真实实例用实际 unitId 和 beginUpload 返回的 uploadId 替换，服务器时间仅检查格式。missing 按集合核对；示例错误文字和可选字段允许不同，错误码与数据须相符。",
+  "rootDigest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+  "steps": [
+    {
+      "actor": "writer",
+      "operationId": "beginUpload",
+      "parameters": {
+        "unitId": "00000000000000000000000001"
+      },
+      "status": 201,
+      "request": {
+        "requestId": "00000000000000000000000003",
+        "clientSnapshotId": "00000000000000000000000002",
+        "parentSnapshotId": null,
+        "expectedHead": null,
+        "rootDigest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+        "scopeRevision": 1,
+        "capturedAt": "2026-11-25T00:00:00Z",
+        "label": "demo",
+        "checkpoint": true,
+        "links": [],
+        "attachments": []
+      },
+      "response": {
+        "uploadId": "00000000000000000000000004",
+        "unitId": "00000000000000000000000001",
+        "clientSnapshotId": "00000000000000000000000002",
+        "state": "open",
+        "receipt": null,
+        "expiresAt": "2026-12-02T00:00:00Z"
+      }
+    },
+    {
+      "actor": "writer",
+      "operationId": "findMissingObjects",
+      "parameters": {
+        "uploadId": "00000000000000000000000004"
+      },
+      "status": 200,
+      "request": {
+        "objects": [
+          {
+            "kind": "chunk",
+            "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "size": 3
+          },
+          {
+            "kind": "tree",
+            "digest": "7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1",
+            "size": 8
+          },
+          {
+            "kind": "file",
+            "digest": "93767d9a46cd34f2b0f34b2bcb221cec09e560014712d3f84d343e2eb03529db",
+            "size": 80
+          },
+          {
+            "kind": "tree",
+            "digest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+            "size": 105
+          }
+        ]
+      },
+      "response": {
+        "missing": [
+          {
+            "kind": "chunk",
+            "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+          },
+          {
+            "kind": "tree",
+            "digest": "7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1"
+          },
+          {
+            "kind": "file",
+            "digest": "93767d9a46cd34f2b0f34b2bcb221cec09e560014712d3f84d343e2eb03529db"
+          },
+          {
+            "kind": "tree",
+            "digest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75"
+          }
+        ]
+      }
+    },
+    {
+      "actor": "writer",
+      "operationId": "finalizeUpload",
+      "parameters": {
+        "uploadId": "00000000000000000000000004"
+      },
+      "status": 409,
+      "response": {
+        "code": "OBJECTS_MISSING",
+        "message": "缺少根对象",
+        "action": "upload_missing",
+        "missing": [
+          {
+            "kind": "tree",
+            "digest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75"
+          }
+        ]
+      }
+    },
+    {
+      "actor": "writer",
+      "operationId": "storeBatch",
+      "parameters": {
+        "uploadId": "00000000000000000000000004"
+      },
+      "status": 200,
+      "request": {
+        "items": [
+          {
+            "kind": "chunk",
+            "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "data": "YWJj"
+          },
+          {
+            "kind": "tree",
+            "digest": "7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1",
+            "data": "S0RUTAAAAAA="
+          },
+          {
+            "kind": "file",
+            "digest": "93767d9a46cd34f2b0f34b2bcb221cec09e560014712d3f84d343e2eb03529db",
+            "data": "S0RGMQAAAAAAAAADungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0AAAABungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+          },
+          {
+            "kind": "tree",
+            "digest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+            "data": "S0RUTAAAAAIABWEudHh0AQAAAAAAAAAAAJN2fZpGzTTysPNLK8siHOwJ5WABRxLT+E00Pi6wNSnbAAVlbXB0eQIAAAAAAAAAAHMmzX6Lys6YOJbm63Jlefs7s8A4zB4glosMr7gXhCLx"
+          }
+        ]
+      },
+      "response": {
+        "items": [
+          {
+            "object": {
+              "kind": "chunk",
+              "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            },
+            "status": "stored"
+          },
+          {
+            "object": {
+              "kind": "tree",
+              "digest": "7326cd7e8bcace983896e6eb726579fb3bb3c038cc1e20968b0cafb8178422f1"
+            },
+            "status": "stored"
+          },
+          {
+            "object": {
+              "kind": "file",
+              "digest": "93767d9a46cd34f2b0f34b2bcb221cec09e560014712d3f84d343e2eb03529db"
+            },
+            "status": "stored"
+          },
+          {
+            "object": {
+              "kind": "tree",
+              "digest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75"
+            },
+            "status": "stored"
+          }
+        ]
+      }
+    },
+    {
+      "actor": "writer",
+      "operationId": "finalizeUpload",
+      "parameters": {
+        "uploadId": "00000000000000000000000004"
+      },
+      "status": 200,
+      "response": {
+        "unitId": "00000000000000000000000001",
+        "snapshotId": "00000000000000000000000002",
+        "rootDigest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+        "outcome": "published",
+        "headAtCommit": "00000000000000000000000002",
+        "committedAt": "2026-11-25T00:00:00Z"
+      }
+    },
+    {
+      "actor": "writer",
+      "operationId": "finalizeUpload",
+      "parameters": {
+        "uploadId": "00000000000000000000000004"
+      },
+      "status": 200,
+      "response": {
+        "unitId": "00000000000000000000000001",
+        "snapshotId": "00000000000000000000000002",
+        "rootDigest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+        "outcome": "published",
+        "headAtCommit": "00000000000000000000000002",
+        "committedAt": "2026-11-25T00:00:00Z"
+      },
+      "assertion": "与前一步回执逐字段相同，history 计数没有增加"
+    },
+    {
+      "actor": "reader",
+      "operationId": "listEntries",
+      "parameters": {
+        "unitId": "00000000000000000000000001",
+        "snapshotId": "00000000000000000000000002",
+        "path": ""
+      },
+      "status": 200,
+      "response": {
+        "items": [
+          {
+            "path": "a.txt",
+            "kind": "file",
+            "size": 3,
+            "mtime": "1970-01-01T00:00:00Z",
+            "executable": false
+          },
+          {
+            "path": "empty",
+            "kind": "directory",
+            "size": null,
+            "mtime": "1970-01-01T00:00:00Z"
+          }
+        ],
+        "nextCursor": null,
+        "snapshotId": "00000000000000000000000002"
+      }
+    },
+    {
+      "actor": "reader",
+      "operationId": "readFile",
+      "parameters": {
+        "unitId": "00000000000000000000000001",
+        "snapshotId": "00000000000000000000000002",
+        "path": "a.txt",
+        "Range": "bytes=1-1"
+      },
+      "status": 206,
+      "responseHeaders": {
+        "ETag": "\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"",
+        "Content-Range": "bytes 1-1/3"
+      },
+      "responseBytesBase64": "Yg=="
+    },
+    {
+      "actor": "reader",
+      "operationId": "beginUpload",
+      "parameters": {
+        "unitId": "00000000000000000000000001"
+      },
+      "status": 403,
+      "request": {
+        "requestId": "00000000000000000000000003",
+        "clientSnapshotId": "00000000000000000000000002",
+        "parentSnapshotId": null,
+        "expectedHead": null,
+        "rootDigest": "1b3d5dd676cd805d5cf3e579682eb2901dd37c3c30d6ce82d368f9cbdc4d9d75",
+        "scopeRevision": 1,
+        "capturedAt": "2026-11-25T00:00:00Z",
+        "label": "demo",
+        "checkpoint": true,
+        "links": [],
+        "attachments": []
+      },
+      "response": {
+        "code": "FORBIDDEN",
+        "message": "只读设备",
+        "action": "stop"
+      }
+    }
+  ]
+}

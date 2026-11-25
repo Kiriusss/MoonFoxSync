@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f6f3" />
+    <link rel="icon" href="/reader/xinhu.png" />
+    <link rel="stylesheet" href="/console/console.css" />
+    <script defer src="/console/console.js"></script>
+    <title>梦枢天罗 · 心狐同步</title>
+  </head>
+  <body>
+    <section id="pair-screen" class="pair-screen">
+      <header class="pair-brand">
+        <img src="/reader/xinhu.png" alt="" />
+        <div><strong>梦枢天罗</strong><small>心狐同步服务端</small></div>
+      </header>
+      <main class="pair-card">
+        <div class="pair-art" aria-hidden="true">
+          <div class="rings"></div>
+          <div class="fox-orbit"><img src="/reader/xinhu.png" alt="" /></div>
+        </div>
+        <div class="pair-body">
+          <h1>连接梦枢天罗</h1>
+          <p>使用 NAS 签发的一次性配对码，访问此设备获授权的资料库和项目。</p>
+          <form id="pair-form">
+            <label for="pair-code">一次性配对码</label
+            ><input
+              id="pair-code"
+              name="code"
+              required
+              autocomplete="one-time-code"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="输入配对码"
+            />
+            <label for="pair-name">设备名称 <span>可选</span></label
+            ><input
+              id="pair-name"
+              name="deviceName"
+              maxlength="80"
+              placeholder="例如，我的浏览器"
+              autocomplete="off"
+            />
+            <button id="pair-submit" class="button primary" type="submit">
+              配对此浏览器 <span aria-hidden="true">→</span>
+            </button>
+            <p id="pair-status" class="inline-status" role="status">正在检查连接…</p>
+          </form>
+        </div>
+      </main>
+    </section>
+    <div id="workspace" class="workspace" hidden>
+      <aside class="rail">
+        <a class="brand" href="#libraries"
+          ><img src="/reader/xinhu.png" alt="" /><span
+            ><strong>梦枢天罗</strong><small>心狐同步服务端</small></span
+          ></a
+        >
+        <nav aria-label="工作区">
+          <a id="nav-libraries" href="#libraries"><i data-icon="library"></i>项目与资料库</a
+          ><a id="nav-timeline" href="#timeline"><i data-icon="clock"></i>版本时间线</a>
+        </nav>
+        <div class="rail-bottom">
+          <span class="device-dot"></span><span>已配对浏览器</span
+          ><button
+            class="icon-button"
+            id="logout"
+            type="button"
+            aria-label="退出当前浏览器"
+            title="退出当前浏览器"
+          >
+            <i data-icon="logout"></i>
+          </button>
+        </div>
+      </aside>
+      <main class="main" id="main">
+        <header class="context">
+          <div class="crumbs" id="crumbs"></div>
+          <button id="refresh" type="button" class="button subtle">
+            <i data-icon="refresh"></i>刷新
+          </button>
+        </header>
+        <div id="view" aria-live="polite"></div>
+      </main>
+    </div>
+    <dialog id="modal" aria-labelledby="modal-title">
+      <div class="dialog-head">
+        <h2 id="modal-title"></h2>
+        <button class="icon-button" type="button" id="modal-close" aria-label="关闭">
+          <i data-icon="close"></i>
+        </button>
+      </div>
+      <div id="modal-body" class="dialog-body"></div>
+      <p id="modal-status" class="inline-status" role="status"></p>
+      <div id="modal-actions" class="dialog-actions"></div>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

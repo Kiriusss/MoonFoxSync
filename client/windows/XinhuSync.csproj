@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>5</LangVersion>
+    <Version>0.4.4.0</Version>
+    <AssemblyName>心狐同步</AssemblyName>
+    <RootNamespace>XinhuSync</RootNamespace>
+    <ApplicationIcon>xinhu.ico</ApplicationIcon>
+    <ApplicationManifest>application.manifest</ApplicationManifest>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Deterministic>true</Deterministic>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Drawing"/>
+    <Reference Include="System.Windows.Forms"/>
+    <Reference Include="System.Web.Extensions"/>
+    <EmbeddedResource Include="xinhu64.png" LogicalName="xinhu64.png"/>
+    <EmbeddedResource Include="../../assets/brand/tray/TrayFox*.ico">
+      <LogicalName>%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>
