@@ -23,7 +23,13 @@ struct PendingSyncButton: View {
 
 struct LiveTransfer: Decodable, Equatable, Identifiable {
     let id, direction, unitId, phase: String
-    let path: String?
+    let path, snapshotId, operationId: String?
+    let projectBytes, projectTotal, projectRate, projectFilesDone, projectFilesTotal: Int64?
+    var activityID: String {
+        if let operationId, !operationId.isEmpty { return operationId }
+        if let snapshotId, !snapshotId.isEmpty { return snapshotId }
+        return id
+    }
     let fileBytes, fileTotal, bytesPerSecond: Int64?
     var file: String { path ?? "" }
     var done: Int64 { max(0, fileBytes ?? 0) }
@@ -35,7 +41,7 @@ struct LiveTransfer: Decodable, Equatable, Identifiable {
     var caption: String {
         switch (phase, direction) {
         case ("preparing", _): return "准备传输"
-        case ("finalizing", _): return "正在完成"
+        case ("finalizing", _): return direction == "upload" ? "正在提交" : "正在完成"
         case (_, "upload"): return "正在上传"
         default: return "正在下载"
         }
@@ -74,6 +80,69 @@ struct TransferDetails: View {
                         Text(fraction.formatted(.percent.precision(.fractionLength(0))))
                     }.font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                 } else { Text("0 B").font(.caption2).foregroundStyle(.secondary) }
+            }
+        }
+    }
+}
+
+struct ProjectTransfer: Identifiable {
+    let id: String
+    let summary: LiveTransfer
+    let files: [LiveTransfer]
+
+    static func group(_ transfers: [LiveTransfer]) -> [Self] {
+        let groups = Dictionary(grouping: transfers, by: { $0.direction + "/" + $0.unitId + "/" + $0.activityID })
+        return groups.keys.sorted().compactMap { key in
+            guard let rows = groups[key], let first = rows.first else { return nil }
+            let summary = rows.first(where: { $0.phase == "finalizing" })
+                ?? rows.first(where: { $0.projectTotal != nil }) ?? first
+            return Self(id: key, summary: summary, files: rows.filter { !$0.file.isEmpty })
+        }
+    }
+}
+
+struct ProjectTransferView: View {
+    let operation: ProjectTransfer
+    let name: String
+    var compact = false
+    @State private var expanded = true
+
+    var body: some View {
+        let row = operation.summary
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: row.direction == "upload" ? "arrow.up" : "arrow.down")
+                Text(name).fontWeight(.semibold).lineLimit(1)
+                Spacer()
+                Text(row.caption).font(.caption)
+            }
+            if row.direction == "upload" {
+                if let total = row.projectTotal, let done = row.projectBytes {
+                    let fraction = total > 0 ? min(1, Double(max(0, done)) / Double(total))
+                        : (row.phase == "finalizing" ? 1.0 : 0.0)
+                    ProgressView(value: fraction).accessibilityLabel("项目总进度")
+                    HStack {
+                        Text(LiveTransfer.bytes(done) + " / " + LiveTransfer.bytes(total))
+                        if total > 0 { Text(fraction.formatted(.percent.precision(.fractionLength(0)))) }
+                        Spacer()
+                        if let rate = row.projectRate { Text(LiveTransfer.bytes(rate) + "/s") }
+                    }.font(.caption.monospacedDigit())
+                } else if row.phase != "finalizing" {
+                    Text(row.phase == "preparing" ? "正在统计项目总量…" : "项目总量尚未提供")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if row.direction == "download" && !operation.files.isEmpty {
+                let rate = operation.files.reduce(Int64(0)) { $0 + max(0, $1.bytesPerSecond ?? 0) }
+                Text("\(operation.files.count) 个文件 · " + LiveTransfer.bytes(rate) + "/s")
+                    .font(.caption.monospacedDigit())
+            }
+            if !compact && !operation.files.isEmpty {
+                DisclosureGroup("文件明细 · " + String(operation.files.count), isExpanded: $expanded) {
+                    ForEach(operation.files) { file in
+                        TransferDetails(transfer: file, project: "").padding(.vertical, 3)
+                    }
+                }.font(.caption)
             }
         }
     }

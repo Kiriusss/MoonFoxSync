@@ -149,7 +149,7 @@ internal sealed partial class MainWindow
 
     void BuildWindow()
     {
-        Text = "心狐同步";
+        Text = "心狐同步 · Moon Fox Sync";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         Font = Style.Type(9);
         ForeColor = Style.Ink;
@@ -532,6 +532,7 @@ internal sealed partial class MainWindow
         Row(policy, Occupy(scanStatus), 34);
         policyCard.Controls.Add(policy);
         Row(settings, policyCard, 287);
+        Row(settings, TransferSettingsCard(), 150);
         Row(settings, CodexCard(), 339);
         var storage = Bar();
         storage.Controls.Add(Action("清除本机同步数据…", delegate { return RemoveLibrary("reset", null); }));

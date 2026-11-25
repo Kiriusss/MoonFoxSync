@@ -224,6 +224,7 @@ func (s *Store) Cache(ctx context.Context, action, unit, snapshot, member string
 			return v, err
 		}
 		var size int64 = -1
+		var expected string
 		for _, raw := range page.Items {
 			var x entry
 			if err = json.Unmarshal(raw, &x); err != nil {
@@ -231,6 +232,7 @@ func (s *Store) Cache(ctx context.Context, action, unit, snapshot, member string
 			}
 			if x.Path == member && x.Kind == "file" && x.Size != nil {
 				size = *x.Size
+				expected = x.Digest
 				break
 			}
 		}
@@ -245,8 +247,21 @@ func (s *Store) Cache(ctx context.Context, action, unit, snapshot, member string
 		file := filepath.Join(tmp, "content")
 		progress := startTransfer(s.Home, "download", unit, snapshot)
 		defer progress.close()
-		if err = r.fetchFile(ctx, progress, unit, snapshot, member, file, size, false); err != nil {
+		limit, err := r.downloadLimit(ctx)
+		if err != nil {
 			return v, err
+		}
+		fd, err := os.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return v, err
+		}
+		err = r.downloadTo(ctx, progress, unit, snapshot, member, fd, size, expected, limit)
+		closeErr := fd.Close()
+		if err != nil {
+			return v, err
+		}
+		if closeErr != nil {
+			return v, closeErr
 		}
 		progress.phase("finalizing")
 		v.SHA, v.Size, err = fileHash(file)

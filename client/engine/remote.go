@@ -28,6 +28,7 @@ import (
 )
 
 type Remote struct {
+	store       *Store
 	base, token string
 	stateHome   string
 	peerPin     string
@@ -91,7 +92,7 @@ func makeRemote(address string, ca []byte, token string) (*Remote, error) {
 			return nil, errors.New("无效的 PEM CA 证书")
 		}
 	}
-	t := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 2 * time.Minute, IdleConnTimeout: 60 * time.Second, MaxIdleConnsPerHost: maxRawUploads}
+	t := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 2 * time.Minute, IdleConnTimeout: 60 * time.Second, MaxIdleConnsPerHost: maxFileTransfers}
 	return &Remote{base: "https://" + u.Host + "/v1", token: token, client: &http.Client{Transport: &commitTransport{normal: t}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func readSecret(device string) (string, error) {
@@ -168,6 +169,7 @@ func (s *Store) Remote(ctx context.Context) (*Remote, error) {
 	r, err := makeRemote(addr, ca, tok)
 	if err == nil {
 		r.stateHome = s.Home
+		r.store = s
 	}
 	return r, err
 }
@@ -324,28 +326,38 @@ func (r *Remote) callBytes(ctx context.Context, method, path string, q url.Value
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 12<<20)).Decode(output)
 }
-func (r *Remote) pages(ctx context.Context, path string, q url.Values) (Page, error) {
+func (r *Remote) eachPage(ctx context.Context, path string, q url.Values, visit func(Page) error) error {
 	if q == nil {
 		q = url.Values{}
 	}
-	out := Page{Items: []json.RawMessage{}}
 	seen := map[string]bool{}
 	for {
 		var page Page
 		if e := r.call(ctx, "GET", path, q, nil, &page); e != nil {
-			return out, e
+			return e
 		}
-		out.Items = append(out.Items, page.Items...)
+		if err := visit(page); err != nil {
+			return err
+		}
 		if page.NextCursor == nil {
-			return out, nil
+			return nil
 		}
 		cur := *page.NextCursor
 		if cur == "" || seen[cur] {
-			return out, errors.New("重复或无效分页游标")
+			return errors.New("重复或无效分页游标")
 		}
 		seen[cur] = true
 		q.Set("cursor", cur)
 	}
+}
+
+func (r *Remote) pages(ctx context.Context, path string, q url.Values) (Page, error) {
+	out := Page{Items: []json.RawMessage{}}
+	err := r.eachPage(ctx, path, q, func(p Page) error {
+		out.Items = append(out.Items, p.Items...)
+		return nil
+	})
+	return out, err
 }
 func (r *Remote) Units(ctx context.Context) (Page, error) { return r.pages(ctx, "/units", nil) }
 func (r *Remote) unitList(ctx context.Context, out *[]unitInfo) error {

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">心狐同步</string>
+    <string name="reader_libraries">%1$s · 只读资料库</string>
+</resources>

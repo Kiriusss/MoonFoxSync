@@ -4,11 +4,13 @@
 <key>CFBundleIdentifier</key><string>local.kirius.xinhu</string>
 <key>CFBundleName</key><string>心狐同步</string>
 <key>CFBundleDisplayName</key><string>心狐同步</string>
+<key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+<key>LSHasLocalizedDisplayName</key><true/>
 <key>CFBundleExecutable</key><string>Xinhu</string>
 <key>CFBundleIconFile</key><string>Avatar.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>8</string>
-<key>CFBundleShortVersionString</key><string>0.4.4</string>
+<key>CFBundleVersion</key><string>9</string>
+<key>CFBundleShortVersionString</key><string>0.4.5</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

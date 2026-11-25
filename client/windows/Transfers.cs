@@ -94,7 +94,7 @@ internal sealed partial class WindowsShell
     internal static string TransferPhase(Record row)
     {
         if (row.Field("phase") == "preparing") return "准备传输";
-        if (row.Field("phase") == "finalizing") return "正在完成";
+        if (row.Field("phase") == "finalizing") return row.Field("direction") == "upload" ? "正在提交" : "正在完成";
         return row.Field("direction") == "upload" ? "正在上传" : "正在下载";
     }
     internal static string FileProgress(Record row)
@@ -116,10 +116,15 @@ internal sealed partial class WindowsShell
 internal sealed partial class MainWindow
 {
     readonly ListView liveGrid = Grid("当前文件", "传输", "速度", "文件进度");
-    RowStyle liveRow;
+    RowStyle liveRow, projectRow;
+    readonly Panel projectTransfers = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Margin = Padding.Empty };
+
 
     void AddTransferPanel(TableLayoutPanel workspace)
     {
+        Row(workspace, projectTransfers, 1);
+        projectRow = workspace.RowStyles[workspace.RowCount - 1];
+        projectRow.Height = 0;
         Row(workspace, liveGrid, 1);
         liveRow = workspace.RowStyles[workspace.RowCount - 1];
         liveRow.Height = 0;
@@ -133,23 +138,56 @@ internal sealed partial class MainWindow
     {
         if (IsDisposed || Disposing) return;
         var rows = shell.Transfers;
+        var groups = ProjectTransferProgress.Group(shell.Transfers);
+        foreach (var group in groups)
+        {
+            var panel = projectTransfers.Controls[group.Key] as ProjectProgressPanel;
+            if (panel == null)
+            {
+                panel = new ProjectProgressPanel { Name = group.Key };
+                projectTransfers.Controls.Add(panel);
+            }
+            string unit = group.Row.Field("unitId");
+            var project = shell.Projects.FirstOrDefault(p => p.Field("unitId") == unit);
+            panel.UpdateProgress(group, project == null ? LibraryName(unit) : project.Field("name"));
+        }
+        var groupKeys = new HashSet<string>(groups.Select(g => g.Key));
+        foreach (Control c in projectTransfers.Controls.Cast<Control>().ToArray())
+            if (!groupKeys.Contains(c.Name)) c.Dispose();
+        projectRow.Height = Math.Min(3, groups.Count) * 36;
+        rows = rows.Where(r => !String.IsNullOrEmpty(r.Field("path"))).ToList();
         var error = shell.TransferError;
         bool visible = rows.Count > 0 || !String.IsNullOrEmpty(error);
         liveGrid.BeginUpdate();
         try
         {
-            liveGrid.Items.Clear();
+            var present = new HashSet<string>(StringComparer.Ordinal);
             foreach (var row in rows)
             {
-                var path = row.Field("path");
-                var phase = WindowsShell.TransferPhase(row);
-                var item = new ListViewItem(new[] {path.Length > 0 ? path : phase, phase, WindowsShell.Rate(row),
-                                                   WindowsShell.FileProgress(row)}) { ToolTipText = path };
-                liveGrid.Items.Add(item);
+                string id = row.Field("id"), path = row.Field("path"), phase = WindowsShell.TransferPhase(row);
+                present.Add(id);
+                var values = new[] { path.Length > 0 ? path : phase, phase, WindowsShell.Rate(row), WindowsShell.FileProgress(row) };
+                var item = liveGrid.Items[id];
+                if (item == null)
+                    liveGrid.Items.Add(new ListViewItem(values) { Name = id, ToolTipText = path });
+                else
+                {
+                    for (int i = 0; i < values.Length; i++)
+                        if (item.SubItems[i].Text != values[i]) item.SubItems[i].Text = values[i];
+                    item.ToolTipText = path;
+                }
             }
-            if (!String.IsNullOrEmpty(error)) liveGrid.Items.Add("读取传输状态失败：" + error);
+            if (!String.IsNullOrEmpty(error))
+            {
+                const string errorKey = "@transfer-error";
+                present.Add(errorKey);
+                var item = liveGrid.Items[errorKey] ?? liveGrid.Items.Add(errorKey, "", -1);
+                item.Text = "读取传输状态失败：" + error;
+            }
+            for (int i = liveGrid.Items.Count - 1; i >= 0; i--)
+                if (!present.Contains(liveGrid.Items[i].Name)) liveGrid.Items.RemoveAt(i);
             liveGrid.Visible = visible;
-            liveRow.Height = visible ? 35 + Math.Min(4,Math.Max(1,rows.Count)) * (Font.Height + 6) : 0;
+            liveRow.Height = visible ? 35 + Math.Min(6,Math.Max(1,liveGrid.Items.Count)) * (Font.Height + 6) : 0;
         }
         finally { liveGrid.EndUpdate(); }
     }

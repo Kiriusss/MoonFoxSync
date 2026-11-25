@@ -150,6 +150,7 @@ internal sealed partial class MainWindow : Form
         else if (page == "settings")
         {
             ReadSettings(true);
+            await LoadTransferLimits();
             await LoadCodexSettings();
         }
     }

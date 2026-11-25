@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: KiriusDrive 文件与快照 API
+  title: Moon Fox Sync 文件与快照 API
   version: 1.0.0
   description: |-
     v1 接口契约。所有链路使用校验服务器身份的 HTTPS。路径相对于 /v1，时间为 RFC 3339 UTC，大小单位为字节；JSON 整数以跨端可精确表示的 2^53−1 为上限。

@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"path"
@@ -18,6 +19,7 @@ const snapshotObjectDelta = ` FROM snapshot_objects o WHERE o.snapshot=? AND (? 
 type uploadFile struct {
 	path                 string
 	total, done, sending int64
+	paths                int64
 }
 type chunkUse struct {
 	file  *uploadFile
@@ -25,9 +27,11 @@ type chunkUse struct {
 }
 type uploadTracker struct {
 	*transfer
-	mu      sync.Mutex
-	rawRead map[objectID]int64
-	uses    map[string][]chunkUse
+	mu       sync.Mutex
+	rawRead  map[objectID]int64
+	uses     map[string][]chunkUse
+	files    [][]Offer
+	metadata []Offer
 }
 
 // Build the path map from frozen manifests, never the current working tree.
@@ -35,78 +39,165 @@ type uploadTracker struct {
 // directories/files. Shared and repeated chunks advance each affected file.
 func (s *Store) uploadTracker(ctx context.Context, t *transfer, snapshot Snapshot, full bool) (*uploadTracker, error) {
 	u := &uploadTracker{transfer: t, rawRead: make(map[objectID]int64), uses: make(map[string][]chunkUse)}
-	rows, err := s.db.QueryContext(ctx, "SELECT o.kind,o.digest"+snapshotObjectDelta, snapshot.ID, full)
+	rows, err := s.db.QueryContext(ctx, "SELECT o.kind,o.digest,o.size"+snapshotObjectDelta, snapshot.ID, full)
 	if err != nil {
 		return nil, err
 	}
-	pending := map[objectfmt.Ref]bool{}
+	pending := map[objectfmt.Ref]int{}
 	for rows.Next() {
 		var ref objectfmt.Ref
-		if err = rows.Scan(&ref.Kind, &ref.Digest); err != nil {
+		var size int
+		if err = rows.Scan(&ref.Kind, &ref.Digest, &size); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		pending[ref] = true
+		pending[ref] = size
+		if ref.Kind != "chunk" {
+			u.metadata = append(u.metadata, Offer{Kind: ref.Kind, Digest: ref.Digest, Size: size})
+		}
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return nil, err
 	}
-	var walk func(string, string) error
-	walk = func(prefix, digest string) error {
-		key := objectfmt.Ref{Kind: "tree", Digest: digest}
-		if !pending[key] {
-			return nil
-		}
-		delete(pending, key)
+	// One visit per distinct tree/file digest. Tree multiplicities are applied
+	// afterwards, so two directory entries pointing at the same subtree count
+	// as two complete logical directories without walking it twice.
+	type tree struct {
+		bytes, files, paths int64
+		dirs                []*tree
+		incomplete          []*uploadFile
+	}
+	trees := map[string]*tree{}
+	files := map[string]*uploadFile{}
+	var postorder []*tree
+	uncached := map[string]*tree{}
+	var walk func(string, string) (*tree, error)
+	walk = func(prefix, digest string) (*tree, error) {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
+		}
+		if prev := trees[digest]; prev != nil {
+			return prev, nil
+		}
+		d := &tree{}
+		if _, changed := pending[objectfmt.Ref{Kind: "tree", Digest: digest}]; !changed {
+			err := s.db.QueryRowContext(ctx, "SELECT bytes,files FROM tree_totals WHERE digest=?", digest).Scan(&d.bytes, &d.files)
+			if err == nil {
+				trees[digest] = d
+				return d, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
 		}
 		entries, err := objectfmt.ReadDir(digest, s.load)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, e := range entries {
 			if err := ctx.Err(); err != nil {
-				return err
+				return nil, err
 			}
 			name := path.Join(prefix, e.Name)
 			switch e.Kind {
 			case "directory":
-				if err = walk(name, e.Digest); err != nil {
-					return err
-				}
-			case "file":
-				key := objectfmt.Ref{Kind: "file", Digest: e.Digest}
-				if !pending[key] {
-					continue
-				}
-				delete(pending, key)
-				info, err := objectfmt.ReadFile(e.Digest, s.load)
+				child, err := walk(name, e.Digest)
 				if err != nil {
-					return err
+					return nil, err
 				}
-				f := &uploadFile{path: name, total: info.Size, done: info.Size}
-				for i, ref := range info.Chunks {
-					if !pending[ref] {
-						continue
+				d.bytes += child.bytes
+				d.files += child.files
+				d.dirs = append(d.dirs, child)
+			case "file":
+				f := files[e.Digest]
+				if f == nil {
+					info, err := objectfmt.ReadFile(e.Digest, s.load)
+					if err != nil {
+						return nil, err
 					}
-					size := min(int64(objectfmt.ChunkSize), info.Size-int64(i)*objectfmt.ChunkSize)
-					f.done -= size
-					uses := u.uses[ref.Digest]
-					if len(uses) > 0 && uses[len(uses)-1].file == f {
-						uses[len(uses)-1].bytes += size
-					} else {
-						u.uses[ref.Digest] = append(uses, chunkUse{f, size})
+					f = &uploadFile{path: name, total: info.Size, done: info.Size}
+					files[e.Digest] = f
+					var owned []Offer
+					for i, ref := range info.Chunks {
+						if _, ok := pending[ref]; !ok {
+							continue
+						}
+						size := min(int64(objectfmt.ChunkSize), info.Size-int64(i)*objectfmt.ChunkSize)
+						f.done -= size
+						uses := u.uses[ref.Digest]
+						if len(uses) == 0 {
+							owned = append(owned, Offer{ref.Kind, ref.Digest, int(size)})
+						}
+						if len(uses) > 0 && uses[len(uses)-1].file == f {
+							uses[len(uses)-1].bytes += size
+						} else {
+							u.uses[ref.Digest] = append(uses, chunkUse{f, size})
+						}
 					}
+					if len(owned) > 0 {
+						u.files = append(u.files, owned)
+					}
+				}
+				d.files++
+				d.bytes += f.total
+				if f.done < f.total {
+					d.incomplete = append(d.incomplete, f)
 				}
 			}
 		}
-		return nil
+		trees[digest] = d
+		uncached[digest] = d
+		postorder = append(postorder, d)
+		return d, nil
 	}
-	if err = walk("", snapshot.Root); err != nil {
+	root, err := walk("", snapshot.Root)
+	if err != nil {
 		return nil, err
+	}
+	root.paths = 1
+	for i := len(postorder) - 1; i >= 0; i-- {
+		d := postorder[i]
+		for _, child := range d.dirs {
+			child.paths += d.paths
+		}
+		for _, f := range d.incomplete {
+			f.paths += d.paths
+		}
+	}
+	done, count := root.bytes, root.files
+	for _, f := range files {
+		done -= (f.total - f.done) * f.paths
+		count -= f.paths
+	}
+	t.setProject(root.bytes, done, root.files, count)
+	// Cache immutable subtree totals for unchanged directories of later
+	// snapshots. No cache is needed to calculate the first/legacy snapshot.
+	if len(uncached) > 0 {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		stmt, err := tx.PrepareContext(ctx, "INSERT OR IGNORE INTO tree_totals(digest,bytes,files) VALUES(?,?,?)")
+		if err != nil {
+			return nil, err
+		}
+		defer stmt.Close()
+		for digest, d := range uncached {
+			if _, err := stmt.ExecContext(ctx, digest, d.bytes, d.files); err != nil {
+				return nil, err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+	}
+	for ref, size := range pending {
+		if ref.Kind == "chunk" && len(u.uses[ref.Digest]) == 0 {
+			u.metadata = append(u.metadata, Offer{Kind: ref.Kind, Digest: ref.Digest, Size: size})
+		}
 	}
 	return u, nil
 }
@@ -117,47 +208,30 @@ func (u *uploadTracker) confirm(id objectID) {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	advance, completed := -u.rawRead[id], int64(0)
 	if n := u.rawRead[id]; n != 0 {
 		u.uses[id.Digest][0].file.sending -= n
 		delete(u.rawRead, id)
 	}
 	for _, use := range u.uses[id.Digest] {
+		advance += use.bytes * use.file.paths
 		use.file.done += use.bytes
+		if use.file.done == use.file.total {
+			completed += use.file.paths
+			u.finishFile(use.file.path)
+		}
 	}
+	u.advanceProject(advance, completed)
 	delete(u.uses, id.Digest)
 }
 
-// Capture immutable offsets before issuing an HTTP request. A byte shared by
-// multiple paths contributes to network speed only once. All users receive
-// the remaining logical progress when the object is acknowledged.
 type uploadSegment struct {
-	start, end        int64
-	path              string
-	base, total, size int64
-	encoded           bool
+	start, end int64
+	size       int
+	id         objectID
+	path       string
 }
 type bodyObserver func(offset int64, n int)
-
-func (u *uploadTracker) observe(segments []uploadSegment) bodyObserver {
-	return func(offset int64, n int) {
-		end := offset + int64(n)
-		for _, s := range segments {
-			if s.start >= end {
-				break
-			}
-			start, stop := max(offset, s.start)-s.start, min(end, s.end)-s.start
-			if start >= stop {
-				continue
-			}
-			if s.encoded {
-				// Four encoded bytes carry up to three bytes of file content.
-				start = min(s.size, start*3/4)
-				stop = min(s.size, stop*3/4)
-			}
-			u.file(s.path, s.base+stop, s.total, stop-start)
-		}
-	}
-}
 
 func (u *uploadTracker) rawObserver(id objectID, size int) bodyObserver {
 	u.mu.Lock()
@@ -169,19 +243,24 @@ func (u *uploadTracker) rawObserver(id objectID, size int) bodyObserver {
 	f := uses[0].file
 	u.file(f.path, f.done+f.sending, f.total, 0)
 	return func(offset int64, n int) {
-		u.mu.Lock()
-		defer u.mu.Unlock()
-		if _, pending := u.uses[id.Digest]; !pending {
-			return
-		}
-		// A transport retry can read the same bytes again. Count wire bytes
-		// each time, but count a logical file byte only once.
-		old := u.rawRead[id]
-		read := max(old, min(int64(size), offset+int64(n)))
-		u.rawRead[id] = read
-		f.sending += read - old
-		u.file(f.path, f.done+f.sending, f.total, int64(n))
+		u.observeChunk(id, offset+int64(n), int64(n), size)
 	}
+}
+
+func (u *uploadTracker) observeChunk(id objectID, offset, delta int64, size int) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	uses := u.uses[id.Digest]
+	if len(uses) == 0 {
+		return
+	}
+	f := uses[0].file
+	old := u.rawRead[id]
+	read := max(old, min(int64(size), offset))
+	u.rawRead[id] = read
+	f.sending += read - old
+	u.advanceProject(read-old, 0)
+	u.file(f.path, f.done+f.sending, f.total, delta)
 }
 
 func (u *uploadTracker) batchObserver(batch []uploadItem, body []byte) (bodyObserver, error) {
@@ -191,7 +270,8 @@ func (u *uploadTracker) batchObserver(batch []uploadItem, body []byte) (bodyObse
 	const marker = `"data":"`
 	next := 0
 	var segments []uploadSegment
-	inBatch := map[*uploadFile]int64{}
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	for _, item := range batch {
 		pos := bytes.Index(body[next:], []byte(marker))
 		if pos < 0 {
@@ -207,15 +287,33 @@ func (u *uploadTracker) batchObserver(batch []uploadItem, body []byte) (bodyObse
 			continue
 		}
 		f := uses[0].file
-		segments = append(segments, uploadSegment{int64(start), int64(next), f.path, f.done + inBatch[f], f.total, int64(len(item.Data)), true})
-		for _, use := range uses {
-			inBatch[use.file] += use.bytes
-		}
+		segments = append(segments, uploadSegment{int64(start), int64(next), len(item.Data), objectID{item.Kind, item.Digest}, f.path})
 	}
 	if len(segments) == 0 {
 		return nil, nil
 	}
 	first := segments[0]
-	u.file(first.path, first.base, first.total, 0)
-	return u.observe(segments), nil
+	f := u.uses[first.id.Digest][0].file
+	u.file(f.path, f.done+f.sending, f.total, 0)
+	lastPath := first.path
+	return func(offset int64, n int) {
+		end := offset + int64(n)
+		for _, seg := range segments {
+			if seg.start >= end {
+				break
+			}
+			start, stop := max(offset, seg.start)-seg.start, min(end, seg.end)-seg.start
+			if start >= stop {
+				continue
+			}
+			// A batch sends its members in sequence on one worker.
+			if lastPath != seg.path {
+				u.finishFile(lastPath)
+				lastPath = seg.path
+			}
+			start = min(int64(seg.size), start*3/4)
+			stop = min(int64(seg.size), stop*3/4)
+			u.observeChunk(seg.id, stop, stop-start, seg.size)
+		}
+	}, nil
 }

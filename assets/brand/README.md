@@ -1,10 +1,8 @@
-# 心狐同步头像
+# 心狐同步主图标
 
-客户端名称为「心狐同步」，服务端名称为「梦枢天罗」。头像参考用户指定的 Lunar665《心月狐》表情作品，通过内置 ImageGen 绘制新的抬手头像。应用使用同目录的 `xinhu.png`，安装包图标由该母版缩放生成。[Pixiv 参考作品](https://www.pixiv.net/artworks/146058515)
+心狐同步的英文名是 **Moon Fox Sync**。图标取自《鸣潮》角色「心」人形时的尾巴。库洛在英文公告中使用了「Hsin the Moon Fox」这个称呼。[英文公告](https://wutheringwaves.kurogames.com/en/main/news/detail/5571)
 
-生成提示词如下。
-
-> Design one square chibi application avatar of the Wuthering Waves character 心月狐 (心) for 心狐同步. Use the supplied Pixiv artwork as reference for the character's true design and simplified sticker proportions: oversized upright ivory triangular fox ears with smoky black tips; a very round soft white-haired face, little curled side buns and a few airy outward locks, red flame-shaped forehead mark in the split center fringe, gold leaf and little blossom ornaments at the ear roots, simple rose-red circular eyes with dark straight upper lashes, very small nose and tiny mouth. Reinterpret as a different, original bust portrait: slightly tilt the head toward the viewer with a pleased tiny fang smile, gently rosy cheeks, one miniature hand raised next to a cheek in a relaxed fox-paw greeting. Cream, white, faded rose and soft charcoal shapes, only a sliver of red and black collar with gold and a little turquoise clasp. Cheerful simple rounded sticker drawing, clean near-black outer contour, very light internal shadows, clean white or warm off-white background. Compose for a desktop app icon with BOTH ear tips fully visible with breathing room at all four edges, large readable face. No watermelon or other food, no text, no circles or elaborate moon background, no typography or signatures. Keep the reference's lovable superdeformed character identity, make a new pose for this icon.
+主图保留人形尾巴蓬松的白色主体、向内弯曲的墨黑尾尖，以及黑金色的四芒星。设计依据官方节目画面、角色档案和游戏内的人形待机动作，以 ImageGen 重新绘制，桌面、网页和 Android 图标由母图 `xinhu.png` 生成。[官方节目《Midnight Podcast | Hsin》](https://www.youtube.com/watch?v=Rkg9wN2U6GY) · [鸣潮官方角色档案](https://www.taptap.cn/moment/852280600130751985)
 
 ## 状态栏图标
 

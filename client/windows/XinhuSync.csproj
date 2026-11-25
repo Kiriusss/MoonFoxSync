@@ -3,7 +3,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <LangVersion>5</LangVersion>
-    <Version>0.4.4.0</Version>
+    <Version>0.4.5.0</Version>
+    <Product>Moon Fox Sync</Product>
     <AssemblyName>心狐同步</AssemblyName>
     <RootNamespace>XinhuSync</RootNamespace>
     <ApplicationIcon>xinhu.ico</ApplicationIcon>

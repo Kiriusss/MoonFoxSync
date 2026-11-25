@@ -83,6 +83,9 @@ func TestRawUploadWindowAndLostReceipt(t *testing.T) {
 			probe := &windowProbe{base: remote.client.Transport, gate: make(chan struct{}), started: make(chan struct{}, 24), calls: map[string]int{}, lose: true}
 			remote.client.Transport = probe
 			if limit == 1 {
+				if _, err = f.s.SetTransferSettings(ctx, &limit, nil); err != nil {
+					t.Fatal(err)
+				}
 				remote.client.Transport = &meter{next: probe, limit: smallLimit}
 			}
 			done := make(chan error, 1)

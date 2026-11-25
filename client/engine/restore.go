@@ -14,6 +14,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -23,6 +25,7 @@ type entry struct {
 	Kind       string     `json:"kind"`
 	Size       *int64     `json:"size"`
 	Mtime      *time.Time `json:"mtime"`
+	Digest     string     `json:"digest"`
 	Executable bool       `json:"executable"`
 	Target     string     `json:"target"`
 }
@@ -80,118 +83,223 @@ func (r *Remote) Restore(ctx context.Context, unit, snapshot, member, destinatio
 	res.Snapshot = snapshot
 	progress := startTransfer(r.stateHome, "download", unit, snapshot)
 	defer progress.close()
-	var dir func(string, string, int) error
-	var materialize func(entry, string, int) error
-	materialize = func(item entry, local string, depth int) error {
-		var err error
-		switch item.Kind {
-		case "directory":
-			if err = os.Mkdir(local, 0700); err == nil {
-				res.Directories++
-				err = dir(item.Path, local, depth+1)
-			}
-		case "file":
-			if item.Size == nil || *item.Size < 0 {
-				return errors.New("服务端缺少文件大小")
-			}
-			if err = r.fetchFile(ctx, progress, unit, snapshot, item.Path, local, *item.Size, item.Executable); err == nil {
-				res.Files++
-				res.Bytes += *item.Size
-			}
-		case "symlink":
-			// Never create a link escaping the new restore directory.
-			if filepath.IsAbs(item.Target) || filepath.VolumeName(item.Target) != "" || !inside(tmp, filepath.Join(filepath.Dir(local), item.Target)) {
-				return fmt.Errorf("链接指向恢复范围外，未写入目标目录: %s", item.Path)
-			}
-			return os.Symlink(item.Target, local)
-		default:
-			return fmt.Errorf("本版无法完整还原目录项 %s (%s)", item.Path, item.Kind)
-		}
-		if err == nil && item.Mtime != nil {
-			err = os.Chtimes(local, *item.Mtime, *item.Mtime)
-		}
-		return err
+	limit, err := r.downloadLimit(ctx)
+	if err != nil {
+		return res, err
 	}
-	dir = func(remote, local string, depth int) error {
-		if depth > 512 {
-			return errors.New("目录嵌套过深")
-		}
-		p, e := r.Entries(ctx, unit, snapshot, remote)
-		if e != nil {
-			return e
-		}
-		for _, m := range p.Items {
-			var item entry
-			if e = json.Unmarshal(m, &item); e != nil {
-				return e
-			}
-			name := path.Base(item.Path)
-			if !localSegment(name) || path.Join(remote, name) != item.Path {
-				return fmt.Errorf("无效的目录项 %q", item.Path)
-			}
-			if e = materialize(item, filepath.Join(local, name), depth); e != nil {
-				return e
-			}
-		}
-		return nil
-	}
+	group, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	tree := restoreTree{remote: r, progress: progress, unit: unit, snapshot: snapshot, root: tmp, limit: limit, workers: make(chan struct{}, limit)}
 	if member == "" {
-		e = dir("", tmp, 0)
+		err = tree.directory(group, cancel, "", tmp, 0)
 	} else {
 		parent := path.Dir(member)
 		if parent == "." {
 			parent = ""
 		}
-		pg, err := r.Entries(ctx, unit, snapshot, parent)
-		if err != nil {
-			return res, err
-		}
 		found := false
-		for _, m := range pg.Items {
-			var item entry
-			if err = json.Unmarshal(m, &item); err != nil {
-				return res, err
+		err = tree.visit(group, parent, func(item entry) error {
+			if item.Path != member {
+				return nil
 			}
-			if item.Path == member {
-				found = true
-				e = materialize(item, filepath.Join(tmp, path.Base(member)), 0)
-				break
+			if found {
+				return errors.New("服务端返回了重复的成员路径")
 			}
-		}
-		if !found {
-			return res, errors.New("指定成员不存在")
+			found = true
+			return tree.materialize(group, cancel, item, filepath.Join(tmp, path.Base(member)), 0)
+		})
+		if err == nil && !found {
+			err = errors.New("指定成员不存在")
 		}
 	}
-	if e != nil {
-		return res, e
+	if err != nil {
+		cancel(err)
+	}
+	tree.wg.Wait()
+	res.Files, res.Bytes, res.Directories = int(tree.files.Load()), tree.bytes.Load(), tree.directories
+	if cause := context.Cause(group); cause != nil {
+		return res, cause
+	}
+	if err = tree.checkLinks(); err != nil {
+		return res, err
 	}
 	progress.phase("finalizing")
-	if e = publishNew(tmp, dst); e != nil {
-		return res, e
+	if err = ctx.Err(); err != nil {
+		return res, err
+	}
+	if err = publishNew(tmp, dst); err != nil {
+		return res, err
 	}
 	return res, nil
 }
-func (r *Remote) fetchFile(ctx context.Context, progress *transfer, unit, snapshot, name, dest string, size int64, executable bool) error {
-	resp, e := r.request(ctx, "GET", "/units/"+unit+"/content", url.Values{"path": {name}, "snapshotId": {snapshot}}, nil, "")
-	if e != nil {
-		return e
+
+type restoreTree struct {
+	remote               *Remote
+	progress             *transfer
+	unit, snapshot, root string
+	limit                int
+	workers              chan struct{}
+	wg                   sync.WaitGroup
+	directories          int
+	files, bytes         atomic.Int64
+	checkTargets         []string
+}
+
+func (r *Remote) downloadLimit(ctx context.Context) (int, error) {
+	if r.store == nil {
+		return defaultFileTransfers, nil
+	}
+	cfg, err := r.store.TransferSettings(ctx)
+	return cfg.Downloads, err
+}
+
+// Visit one listing page at a time, keeping wide project directories bounded.
+func (t *restoreTree) visit(ctx context.Context, parent string, visit func(entry) error) error {
+	q := url.Values{"path": {parent}, "snapshotId": {t.snapshot}}
+	return t.remote.eachPage(ctx, "/units/"+t.unit+"/entries", q, func(pg Page) error {
+		for _, raw := range pg.Items {
+			var item entry
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return err
+			}
+			name := path.Base(item.Path)
+			if !localSegment(name) || path.Join(parent, name) != item.Path {
+				return fmt.Errorf("无效的目录项 %q", item.Path)
+			}
+			if err := visit(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (t *restoreTree) directory(ctx context.Context, cancel context.CancelCauseFunc, parent, local string, depth int) error {
+	if depth > 512 {
+		return errors.New("目录嵌套过深")
+	}
+	return t.visit(ctx, parent, func(item entry) error {
+		return t.materialize(ctx, cancel, item, filepath.Join(local, path.Base(item.Path)), depth)
+	})
+}
+
+func (t *restoreTree) materialize(ctx context.Context, cancel context.CancelCauseFunc, item entry, local string, depth int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	switch item.Kind {
+	case "directory":
+		if err := os.Mkdir(local, 0700); err != nil {
+			return err
+		}
+		t.directories++
+		if err := t.directory(ctx, cancel, item.Path, local, depth+1); err != nil {
+			return err
+		}
+		return restoreTime(local, item.Mtime)
+	case "symlink":
+		if item.Target == "" || os.IsPathSeparator(item.Target[0]) || filepath.VolumeName(item.Target) != "" || !inside(t.root, filepath.Join(filepath.Dir(local), item.Target)) {
+			return fmt.Errorf("链接指向恢复范围外，未写入目标目录: %s", item.Path)
+		}
+		if err := os.Symlink(item.Target, local); err != nil {
+			return err
+		}
+		// Interior ".." can traverse another symlink before walking upward.
+		// Recheck that path against the complete staging tree before publication.
+		if strings.Contains("/"+filepath.ToSlash(item.Target)+"/", "/../") {
+			rel, err := filepath.Rel(t.root, local)
+			if err != nil {
+				return err
+			}
+			t.checkTargets = append(t.checkTargets, rel)
+		}
+		return nil
+	case "file":
+		if item.Size == nil || *item.Size < 0 || *item.Size >= 1<<53 {
+			return errors.New("服务端文件大小无效")
+		}
+		select {
+		case t.workers <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		// Reserve an exclusive file during traversal. Once children are scheduled
+		// the directory timestamp can be restored while their contents arrive.
+		perm := os.FileMode(0600)
+		if item.Executable {
+			perm = 0700
+		}
+		f, err := os.OpenFile(local, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+		if err != nil {
+			<-t.workers
+			return err
+		}
+		t.wg.Go(func() {
+			defer func() { <-t.workers }()
+			err := t.remote.downloadTo(ctx, t.progress, t.unit, t.snapshot, item.Path, f, *item.Size, item.Digest, t.limit)
+			closeErr := f.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err == nil {
+				err = restoreTime(local, item.Mtime)
+			}
+			if err != nil {
+				cancel(err)
+				return
+			}
+			t.files.Add(1)
+			t.bytes.Add(*item.Size)
+		})
+		return nil
+	default:
+		return fmt.Errorf("本版无法完整还原目录项 %s (%s)", item.Path, item.Kind)
+	}
+}
+
+func (t *restoreTree) checkLinks() error {
+	if len(t.checkTargets) == 0 {
+		return nil
+	}
+	root, err := os.OpenRoot(t.root)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for _, rel := range t.checkTargets {
+		if _, err := root.Stat(rel); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("无法安全还原链接 %s: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+func restoreTime(local string, stamp *time.Time) error {
+	if stamp == nil {
+		return nil
+	}
+	return os.Chtimes(local, *stamp, *stamp)
+}
+
+func (r *Remote) downloadTo(ctx context.Context, progress *transfer, unit, snapshot, name string, f *os.File, size int64, expected string, limit int) error {
+	release, err := acquireFileSlot(ctx, r.stateHome, "download", limit)
+	if err != nil {
+		return err
+	}
+	defer release()
+	progress.file(name, 0, size, 0)
+	defer progress.finishFile(name)
+	resp, err := r.request(ctx, "GET", "/units/"+unit+"/content", url.Values{"path": {name}, "snapshotId": {snapshot}}, nil, "")
+	if err != nil {
+		return err
 	}
 	defer resp.Body.Close()
+	if expected != "" && resp.Header.Get("ETag") != "\""+expected+"\"" {
+		return errors.New("文件摘要与选定快照不符")
+	}
 	resp.Body = progress.download(resp.Body, name, size)
-	perm := os.FileMode(0600)
-	if executable {
-		perm = 0700
-	}
-	f, e := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
-	if e != nil {
-		return e
-	}
-	_, e = copyVerified(f, resp, size)
-	ce := f.Close()
-	if e == nil {
-		e = ce
-	}
-	return e
+	_, err = copyVerified(f, resp, size)
+	return err
 }
 
 // Content is accepted only from one complete response with a strong content digest.
@@ -242,6 +350,15 @@ func (r *Remote) Get(ctx context.Context, unit, member, destination string) (Get
 	}
 	progress := startTransfer(r.stateHome, "download", unit, "")
 	defer progress.close()
+	limit, e := r.downloadLimit(ctx)
+	if e != nil {
+		return res, e
+	}
+	release, e := acquireFileSlot(ctx, r.stateHome, "download", limit)
+	if e != nil {
+		return res, e
+	}
+	defer release()
 	resp, e := r.request(ctx, "GET", "/units/"+unit+"/content", url.Values{"path": {member}}, nil, "")
 	if e != nil {
 		return res, e

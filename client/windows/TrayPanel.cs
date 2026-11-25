@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace XinhuSync
@@ -9,6 +10,8 @@ internal sealed class TrayPanel : Form
     readonly WindowsShell shell;
     readonly Label summary, connection, counts;
     readonly Button check, pause, sync;
+    readonly ProgressBar projectBar = new ProgressBar { Height = 6, Dock = DockStyle.Bottom, Maximum = 1000,
+                                                        AccessibleName = "项目总进度", Visible = false };
     readonly Button[] projects = new Button[3];
     readonly ToolTip projectTips = new ToolTip();
     readonly Image portrait;
@@ -29,12 +32,12 @@ internal sealed class TrayPanel : Form
         Font = new Font("Microsoft YaHei UI", 9F);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(375, 363);
+        ClientSize = new Size(375, 385);
         Padding = new Padding(16, 14, 16, 12);
         var content = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 10 };
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        foreach (var height in new[] { 29, 23, 26, 35, 30, 30, 30, 40, 39, 34 })
+        foreach (var height in new[] { 29, 23, 48, 35, 30, 30, 30, 40, 39, 34 })
             content.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
         Controls.Add(content);
 
@@ -57,6 +60,7 @@ internal sealed class TrayPanel : Form
         content.SetColumnSpan(header, 2);
         connection = Line(content, 1, "", true);
         summary = Line(content, 2, "", false);
+        summary.Controls.Add(projectBar);
         var queueRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1,
                                              Margin = Padding.Empty };
         queueRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -168,13 +172,15 @@ internal sealed class TrayPanel : Form
             (shell.LastChecked.HasValue ? " · 上次检查 " + shell.LastChecked.Value.ToString("HH:mm") : ""));
         sync.Text = shell.SyncButtonText;
         sync.Enabled = shell.CanSyncPending;
+        projectBar.Visible = false;
         if (shell.Transfers != null && shell.Transfers.Count > 0)
         {
-            var active = shell.Transfers[0];
-            summary.Text = WindowsShell.TransferPhase(active) + " · " + WindowsShell.Rate(active) + " " + active.Field("path");
-            var progress = WindowsShell.FileProgress(active);
-            if (!String.IsNullOrEmpty(progress))
-                counts.Text += " · " + progress;
+            var groups = ProjectTransferProgress.Group(shell.Transfers);
+            var active = groups[0];
+            string unit = active.Row.Field("unitId");
+            var project = shell.Projects.FirstOrDefault(p => p.Field("unitId") == unit);
+            summary.Text = (project == null ? unit : project.Field("name")) + Environment.NewLine + active.Caption;
+            active.Apply(projectBar);
             projectTips.SetToolTip(summary, summary.Text);
             projectTips.SetToolTip(counts, counts.Text);
         }

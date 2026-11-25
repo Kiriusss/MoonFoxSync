@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"kirius.local/kiriusdrive/internal/objectfmt"
@@ -182,6 +183,7 @@ func (s *Store) homeRemote(ctx context.Context, p AutoPolicy) (*Remote, error) {
 // Its total allowance is reserved in SQLite before any request is sent; after a
 // crash the conservative reservation remains charged for the full 24h window.
 type meter struct {
+	mu          sync.Mutex
 	next        http.RoundTripper
 	limit, used int64
 }
@@ -191,27 +193,37 @@ type meteredBody struct {
 }
 
 func (b meteredBody) Read(p []byte) (int, error) {
-	left := b.m.limit - b.m.used
-	if left == 0 {
+	// Reserve only the bandwidth available to this reader. Return unused
+	// credit after a short read; multiple active responses share one budget.
+	b.m.mu.Lock()
+	allowed := min(int64(len(p)), b.m.limit-b.m.used)
+	b.m.used += allowed
+	b.m.mu.Unlock()
+	if allowed == 0 {
 		return 0, ErrWaiting
 	}
-	if int64(len(p)) > left {
-		p = p[:left]
-	}
-	n, e := b.ReadCloser.Read(p)
-	b.m.used += int64(n)
-	return n, e
+	n, err := b.ReadCloser.Read(p[:allowed])
+	b.m.mu.Lock()
+	b.m.used -= allowed - int64(n)
+	b.m.mu.Unlock()
+	return n, err
 }
 func (m *meter) RoundTrip(req *http.Request) (*http.Response, error) {
+	m.mu.Lock()
 	if req.ContentLength < 0 || req.ContentLength > m.limit-m.used {
+		m.mu.Unlock()
 		return nil, ErrWaiting
 	}
 	m.used += req.ContentLength
+	m.mu.Unlock()
 	resp, e := m.next.RoundTrip(req)
 	if e != nil {
 		return nil, e
 	}
-	if resp.ContentLength > m.limit-m.used {
+	m.mu.Lock()
+	tooLarge := resp.ContentLength > m.limit-m.used
+	m.mu.Unlock()
+	if tooLarge {
 		resp.Body.Close()
 		return nil, ErrWaiting
 	}

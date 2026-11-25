@@ -150,8 +150,10 @@ extension ReadingRoom {
             if !model.transferError.isEmpty {
                 Text("读取传输进度失败：" + model.transferError).font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(model.transfers) { transfer in
-                TransferDetails(transfer: transfer, project: model.name(for: transfer.unitId)).padding(14).deskCard()
+            let activeFileCount = model.transfers.filter { $0.phase == "transferring" && !$0.file.isEmpty }.count
+            if activeFileCount > 0 { Text("当前传输 · \(activeFileCount) 个文件").font(.headline) }
+            ForEach(ProjectTransfer.group(model.transfers)) { operation in
+                ProjectTransferView(operation: operation, name: model.name(for: operation.summary.unitId)).padding(14).deskCard()
             }
             let jobs = model.jobs.reversed().filter { !pendingOnly || $0.pending }
             if jobs.isEmpty && model.transfers.isEmpty {
@@ -214,6 +216,7 @@ extension ReadingRoom {
                 Divider()
                 settingText("外出网络",scheduler.defaults.bool(forKey:"awaySmall") ? "自动传小任务，单次最多 10 MiB，24 小时累计最多 100 MiB。" : "仅在手动指定版本时上传。").padding(15)
             }.deskCard()
+            TransferSettingsCard()
             CodexBackupCard(model:model,scheduler:scheduler)
             VStack(alignment: .leading, spacing: 10) {
                 HStack {

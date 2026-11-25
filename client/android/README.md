@@ -1,6 +1,6 @@
-# 心狐同步 Android 阅读端
+# 心狐同步 · Moon Fox Sync Android 只读阅读端
 
-本客户端使用 Kotlin 和 Android 原生 View，支持 Android 8.0（API 26）及以上，可在手机上查看梦枢天罗服务端已授权的资料库。托管资料库支持逐版本浏览，外部只读目录直接浏览 NAS 当前内容。
+Android 0.1.1 随系统语言显示中文或英文应用名。客户端使用 Kotlin 和 Android 原生 View，支持 Android 8.0（API 26）及以上，可在手机上查看梦枢天罗服务端已授权的资料库。托管资料库支持逐版本浏览，外部只读目录直接浏览 NAS 当前内容。
 
 ## 构建与安装
 

@@ -249,13 +249,13 @@ internal class Nas(private val keys: Credentials) {
             c.inputStream.use { JSONObject(String(bounded(it, 4 shl 20))) }
         }
 
-    fun pair(url: String, cert: String, code: String) {
+    fun pair(url: String, cert: String, code: String, deviceName: String) {
         keys.initialize(address(url), cert)
         val body =
             JSONObject()
                 .put("code", code.trim())
                 .put("deviceId", keys.id)
-                .put("deviceName", "心狐同步 Android")
+                .put("deviceName", deviceName)
                 .put("token", keys.token())
         try {
             request("/pair", body = body, sendToken = false) { c ->

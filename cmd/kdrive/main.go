@@ -42,6 +42,7 @@ const help = `心狐同步 · kdrive
   bindings
   cache list | cache fetch|evict <unitId> <snapshotId> --path <relative-file>
   snapshot <unitId> [--name label]
+  settings transfers [--uploads N] [--downloads M]
   queue | transfers
   sync-pending --now [--home-url <https://家庭地址:端口>] [--home-interface <网卡>]
   sync <unitId> --snapshot <snapshotId> --now
@@ -84,6 +85,28 @@ func run(ctx context.Context, args []string) (any, error) {
 	}
 	defer s.Close()
 	switch args[0] {
+	case "settings":
+		if len(args) < 2 || args[1] != "transfers" {
+			return nil, errors.New(help)
+		}
+		if len(args) == 2 {
+			return s.TransferSettings(ctx)
+		}
+		f := flags("settings transfers")
+		up := f.Int("uploads", 0, "")
+		down := f.Int("downloads", 0, "")
+		if e = parse(f, args[2:]); e != nil {
+			return nil, e
+		}
+		var u, d *int
+		f.Visit(func(o *flag.Flag) {
+			if o.Name == "uploads" {
+				u = up
+			} else {
+				d = down
+			}
+		})
+		return s.SetTransferSettings(ctx, u, d)
 	case "library":
 		return libraryCommands(ctx, s, args[1:])
 	case "timeline":

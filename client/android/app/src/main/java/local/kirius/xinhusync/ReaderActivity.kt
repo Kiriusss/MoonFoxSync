@@ -180,7 +180,7 @@ class ReaderActivity : Activity() {
     private fun pairing() {
         opened = null
         screen = null
-        frame("心狐同步", false)
+        frame(getString(R.string.app_name), false)
         status.text = "连接 NAS · 只读设备配对"
         val address =
             EditText(this).apply {
@@ -216,7 +216,7 @@ class ReaderActivity : Activity() {
                 return@button
             }
             val selected = pem
-            task("正在验证 NAS…", { nas.pair(url, selected, secret) }) {
+            task("正在验证 NAS…", { nas.pair(url, selected, secret, getString(R.string.app_name) + " Android") }) {
                 code.text.clear()
                 navigate(Screen.Units(), false)
             }
@@ -303,7 +303,7 @@ class ReaderActivity : Activity() {
         frame(s.title, !trail.isEmpty(), false)
         status.text =
             when (s) {
-                is Screen.Units -> "心狐同步 · 只读资料库"
+                is Screen.Units -> getString(R.string.reader_libraries, getString(R.string.app_name))
                 is Screen.History -> "选择要查看的快照"
                 is Screen.Entries -> s.folder.path.ifEmpty { "根目录" }
             }

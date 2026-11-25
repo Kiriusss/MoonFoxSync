@@ -12,6 +12,7 @@ cd "$root"
 xcrun swiftc -parse-as-library -O -target arm64-apple-macos14.0 client/macos/*.swift -o "$app/Contents/MacOS/Xinhu"
 xcrun swiftc -parse-as-library -O -target arm64-apple-macos14.0 client/macos/Login/XinhuLogin.swift -o "$app/Contents/Helpers/XinhuLogin"
 cp client/macos/Login/local.kirius.xinhu.login.plist "$app/Contents/Library/LaunchAgents/"
+cp -R client/macos/*.lproj "$app/Contents/Resources/"
 cp assets/brand/xinhu.png "$app/Contents/Resources/Avatar.png"
 cp assets/brand/tray/TrayFox*.png "$app/Contents/Resources/"
 iconbuild=$(mktemp -d)

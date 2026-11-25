@@ -287,6 +287,8 @@ func (s *Store) RemoveLocal(ctx context.Context, unit, token string) (LocalRemov
 	for _, query := range []string{
 		"DELETE FROM traffic WHERE ?1='' OR snapshot IN(SELECT id FROM snapshots WHERE unit=?1)",
 		"DELETE FROM snapshot_objects WHERE ?1='' OR snapshot IN(SELECT id FROM snapshots WHERE unit=?1)",
+		"DELETE FROM tree_totals WHERE ?1='' OR NOT EXISTS(SELECT 1 FROM snapshot_objects o WHERE o.kind='tree' AND o.digest=tree_totals.digest)",
+		"UPDATE transfer_settings SET uploads=4,downloads=4 WHERE ?1=''",
 		"DELETE FROM snapshots WHERE ?1='' OR unit=?1",
 		"DELETE FROM cached_files WHERE ?1='' OR unit=?1",
 		"DELETE FROM codex_file_cache WHERE ?1='' OR source IN(SELECT r.identity FROM binding_roots r JOIN bindings b ON b.unit=r.unit WHERE b.unit=?1 AND b.profile='codex')",

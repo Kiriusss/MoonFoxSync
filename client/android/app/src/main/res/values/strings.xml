@@ -1,1 +1,4 @@
-<resources><string name="app_name">心狐同步</string></resources>
+<resources>
+    <string name="app_name">Moon Fox Sync</string>
+    <string name="reader_libraries">%1$s · Read-only libraries</string>
+</resources>

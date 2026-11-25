@@ -384,7 +384,7 @@ internal sealed partial class WindowsShell : ApplicationContext
         if (tray == null || quitting)
             return;
         var active = Transfers == null ? null : Transfers.FirstOrDefault();
-        string tip = "心狐同步 · " + (active == null ? StatusText : TransferPhase(active) + " " + Rate(active));
+        string tip = "心狐同步 · " + (active == null ? StatusText : ProjectTransferProgress.Group(Transfers)[0].Caption);
         tray.Text = tip.Length <= 63 ? tip : tip.Substring(0, 62) + "…";
         statusItem.Text = StatusText.Length <= 56 ? StatusText : StatusText.Substring(0, 55) + "…";
         queueItem.Text = Queued < 0 ? "打开队列" : "打开队列（" + Queued + " 项待上传）";

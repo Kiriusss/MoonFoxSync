@@ -184,42 +184,91 @@ func (s *Store) pushObjects(ctx context.Context, r *Remote, progress *transfer, 
 	if err != nil {
 		return err
 	}
-	// A known, published local parent is already reachable by the NAS. Walk
-	// only the new references, bounded pages at a time, closing DB cursors
-	// before network I/O so background capture and accounting can progress.
-	var prevKind, prevDigest string
-	for {
-		rows, e := s.db.QueryContext(ctx, "SELECT o.kind,o.digest,o.size"+snapshotObjectDelta+
-			" AND (o.kind,o.digest)>(?,?) ORDER BY o.kind,o.digest LIMIT 256", snapshot.ID, full, prevKind, prevDigest)
-		if e != nil {
-			return e
+	settings, err := s.TransferSettings(ctx)
+	if err != nil {
+		return err
+	}
+	workers := min(settings.Uploads, len(tracker.files))
+	if workers > 0 {
+		ctx, cancel := context.WithCancelCause(ctx)
+		defer cancel(nil)
+		// Files stay on the same worker. Each shared chunk has one owner, and
+		// batches put consecutive small files on a single connection. Multiple
+		// connections therefore upload independent files, even when all are tiny.
+		var group sync.WaitGroup
+		for lane := range workers {
+			group.Go(func() {
+				release, err := acquireFileSlot(ctx, s.Home, "upload", settings.Uploads)
+				if err != nil {
+					cancel(err)
+					return
+				}
+				defer release()
+				if err := s.sendFileLane(ctx, r, tracker, session, lane, workers, min(maxRawUploads, settings.Uploads/workers)); err != nil {
+					cancel(err)
+				}
+			})
 		}
-		var offers []Offer
-		for rows.Next() {
-			var o Offer
-			if e = rows.Scan(&o.Kind, &o.Digest, &o.Size); e != nil {
-				rows.Close()
-				return e
-			}
-			offers = append(offers, o)
+		group.Wait()
+		if err := context.Cause(ctx); err != nil {
+			return err
 		}
-		e = rows.Err()
-		rows.Close()
-		if e != nil {
-			return e
+	}
+	// Manifests are independent of their data on the wire. Finalization
+	// references them only after every file and metadata batch is acknowledged.
+	for len(tracker.metadata) > 0 {
+		n := min(256, len(tracker.metadata))
+		if err := s.sendPage(ctx, r, tracker, session, tracker.metadata[:n], 1); err != nil {
+			return err
 		}
-		if len(offers) == 0 {
+		tracker.metadata = tracker.metadata[n:]
+	}
+	return nil
+}
+
+func (s *Store) sendFileLane(ctx context.Context, r *Remote, tracker *uploadTracker, session string, lane, workers, rawWindow int) error {
+	var small []Offer
+	bytes := 0
+	flush := func() error {
+		if len(small) == 0 {
 			return nil
 		}
-		if e = s.sendPage(ctx, r, tracker, session, offers); e != nil {
-			return e
-		}
-		last := offers[len(offers)-1]
-		prevKind, prevDigest = last.Kind, last.Digest
+		err := s.sendPage(ctx, r, tracker, session, small, 1)
+		small = small[:0]
+		bytes = 0
+		return err
 	}
-
+	for i := lane; i < len(tracker.files); i += workers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		file := tracker.files[i]
+		if len(file) == 1 && file[0].Size < 1<<20 {
+			if len(small) == 256 || bytes+file[0].Size > 4<<20 {
+				if err := flush(); err != nil {
+					return err
+				}
+			}
+			small = append(small, file[0])
+			bytes += file[0].Size
+			continue
+		}
+		if err := flush(); err != nil {
+			return err
+		}
+		// A raw PUT window always belongs to a single logical file.
+		for len(file) > 0 {
+			n := min(len(file), 256)
+			if err := s.sendPage(ctx, r, tracker, session, file[:n], rawWindow); err != nil {
+				return err
+			}
+			file = file[n:]
+		}
+	}
+	return flush()
 }
-func (s *Store) sendPage(ctx context.Context, r *Remote, tracker *uploadTracker, session string, offers []Offer) error {
+
+func (s *Store) sendPage(ctx context.Context, r *Remote, tracker *uploadTracker, session string, offers []Offer, rawWindow int) error {
 	path := "/uploads/" + session
 	var result struct {
 		Missing []objectID `json:"missing"`
@@ -252,7 +301,7 @@ func (s *Store) sendPage(ctx context.Context, r *Remote, tracker *uploadTracker,
 			small = append(small, o)
 		}
 	}
-	if err := s.sendLarge(ctx, r, tracker, path, large); err != nil {
+	if err := s.sendLarge(ctx, r, tracker, path, large, rawWindow); err != nil {
 		return err
 	}
 	batch := []uploadItem{}
@@ -312,14 +361,11 @@ const maxRawUploads = 4
 
 // Keep a small window of raw PUTs in flight so checksum, network and NAS
 // durable writes overlap. Only active workers load blocks into memory.
-func (s *Store) sendLarge(ctx context.Context, r *Remote, tracker *uploadTracker, path string, objects []Offer) error {
+func (s *Store) sendLarge(ctx context.Context, r *Remote, tracker *uploadTracker, path string, objects []Offer, rawWindow int) error {
 	if len(objects) == 0 {
 		return nil
 	}
-	workers := min(maxRawUploads, len(objects))
-	if _, metered := r.client.Transport.(*meter); metered {
-		workers = 1
-	}
+	workers := min(rawWindow, len(objects))
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	var group sync.WaitGroup

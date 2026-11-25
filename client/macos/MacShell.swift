@@ -98,8 +98,8 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
                     let records = names.contains { $0.hasSuffix(".json") }
                     let items = records ? try await CLI.rows(["transfers"], LiveTransfer.self) : []
                     if items != model.transfers {
-                        let active = Set(items.map(\.id))
-                        let finished = model.transfers.contains { $0.direction == "upload" && !active.contains($0.id) }
+                        let active = Set(items.filter { $0.direction == "upload" }.map(\.activityID))
+                        let finished = model.transfers.contains { $0.direction == "upload" && !active.contains($0.activityID) }
                         model.transfers = items
                         if finished { try? await model.refreshJobs() }
                     }
@@ -198,7 +198,7 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1020, height: 670),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
-            window.title = "心狐同步"
+            window.title = "心狐同步 · Moon Fox Sync"
             window.identifier = NSUserInterfaceItemIdentifier("xinhu.main")
             window.titlebarSeparatorStyle = .none
             window.isReleasedWhenClosed = false
@@ -287,12 +287,13 @@ private struct QuickPanel: View {
                     }.buttonStyle(.plain).accessibilityLabel("查看传输队列").help("查看传输队列")
                     PendingSyncButton(model: model, schedule: schedule).controlSize(.small)
                 }
-                if let transfer = model.transfers.first {
+                let operations = ProjectTransfer.group(model.transfers)
+                if let operation = operations.first {
                     Button { shell.openMain(.queue) } label: {
-                        TransferDetails(transfer: transfer, project: "", compact: true)
-                    }.buttonStyle(.plain).help("查看传输详情")
-                    if model.transfers.count > 1 {
-                        Text("共 \(model.transfers.count) 个传输任务").font(.caption2).foregroundStyle(.secondary)
+                        ProjectTransferView(operation: operation, name: model.name(for: operation.summary.unitId), compact: true)
+                    }.buttonStyle(.plain).help("查看项目传输及文件明细")
+                    if operations.count > 1 {
+                        Text("共 \(operations.count) 项传输").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 if !model.pendingSyncStatus.isEmpty {
