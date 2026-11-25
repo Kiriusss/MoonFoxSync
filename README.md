@@ -22,11 +22,11 @@
 - **把大传输留到回家。** 家庭网卡、直连路由与 NAS 身份匹配时，可以自动上传完整项目。通过 Tailscale 外出访问时，默认手动传，也可放行小任务。菜单栏与任务栏托盘都有「立即同步」。同一项目的上传、下载并发可分别设为 1–50 个文件，上传主进度显示整份快照，下方可看各文件的进度与实测速率。[网络策略](快速开始.md#按来源自动同步) · [传输进度](快速开始.md#查看传输进度)
 - **旧版本可以单独取回。** 网页可预览文本和常见图片，下载单个文件或所选快照的完整 ZIP。每个受管项目可保留全部、最近若干个或最近若干天的时间点。手动删除时间点前可以预览影响，并重建受影响版本的索引，保留其内容和恢复能力。[版本与保存策略](快速开始.md#恢复时间线保存策略和删除并重建)
 
-需要节省本机空间时，在快照浏览页面用「取回本机」按需打开文件，使用完再「释放缓存」。这个操作只清理应用下载的副本。已绑定工作目录中的原稿会继续留在原位置。[本机副本与缓存](快速开始.md#mac-上保存恢复和释放空间)
+Mac 上选「释放原位置空间…」，可以把已上传的文件换成同名的只读链接。原文件夹、文件名和打开路径都保留，联网可读；点「取回原文件」后即可离线编辑。可在 Finder 启用云朵徽标。快照浏览页的「释放缓存」单独清理下载副本。[原位置按需与缓存](快速开始.md#mac-上保存恢复和释放空间)
 
 ## 平台与下载
 
-- **macOS**　Apple Silicon，macOS 14 及以上。打开 DMG，把应用拖入「应用程序」。支持菜单栏、登录自启、备份与恢复。[下载 Mac 版](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-0.4.6-Mac-arm64.dmg)
+- **macOS**　Apple Silicon，macOS 14 及以上。打开 DMG，把应用拖入「应用程序」。支持菜单栏、登录自启、备份与恢复。[下载 Mac 版](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.8/MoonFoxSync-0.4.8-Mac-arm64.dmg)
 - **Windows**　Windows 10/11 x64，需 .NET Framework 4.8。0.4.7 使用中文安装向导。桌面端提供 WPF 同步概览、可折叠侧栏和可搜索的项目列表。另提供 ZIP，完整解压后运行「心狐同步.exe」。[下载 Windows 安装程序](https://github.com/Kiriusss/MoonFoxSync/releases/latest/download/MoonFoxSync-Windows-x64.msi) · [便携 ZIP](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.7/MoonFoxSync-0.4.7-Windows-x64.zip)
 - **NAS**　梦枢天罗服务端发行包面向 Linux amd64，内置网页控制台。已有 NAS 目录也可以登记为只读资料库。[下载 NAS 服务端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-Server-0.4.6-linux-amd64.tar.gz)
 - **Android**　提供只读开发版 APK，可浏览授权目录和历史，读取选定文件。当前包使用调试签名。[下载 Android 阅读端](https://github.com/Kiriusss/MoonFoxSync/releases/download/v0.4.6/MoonFoxSync-Android-0.1.1.apk)

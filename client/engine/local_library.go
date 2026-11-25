@@ -256,6 +256,9 @@ func (s *Store) RemoveLocal(ctx context.Context, unit, token string) (LocalRemov
 	}
 	// SQLite commits the reference removal and its cleanup journal together.
 	// A retry can finish an interrupted physical cleanup without a surviving binding.
+	if err := s.guardWorkspace(ctx, unit); err != nil {
+		return p, err
+	}
 	previous, err := pendingLocalPlan(ctx, s.db, unit)
 	if err != nil {
 		return p, err

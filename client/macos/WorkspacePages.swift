@@ -221,6 +221,7 @@ extension ReadingRoom {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("本机同步数据").font(.headline)
+                    Button("原位置按需…") { shell.workspaceRequest=WorkspaceRequest() }
                     Spacer()
                     if !model.bindings.isEmpty {
                         Menu("移除本机项目…") {
@@ -281,6 +282,11 @@ extension ReadingRoom {
 extension ReadingRoom {
     var cachePage: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("原位置按需").font(.headline)
+                Spacer()
+                Button("管理原位置文件…") { shell.workspaceRequest=WorkspaceRequest() }.buttonStyle(DeskAction())
+            }.padding(15).deskCard()
             if model.cache.isEmpty {
                 PanelEmpty(icon: "arrow.down.to.line", title: "尚未取回文件",
                            detail: "在资料库中打开一个快照，选择文件并取回本机，即可在这里管理下载缓存。")

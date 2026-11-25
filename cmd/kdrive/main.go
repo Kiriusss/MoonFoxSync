@@ -38,6 +38,9 @@ const help = `心狐同步 · kdrive
   timeline delete <资料库ID> --snapshot <时间点> --head <当前版本> --plan-token <预览令牌>
   timeline restore <资料库ID> --snapshot <时间点> --head <当前版本> --request <UUID> [--name 说明]
   status | units
+  workspace list | workspace plan|hydrate --source <原路径>
+  workspace release --source <原路径> --snapshot <已预览版本> --sha <已预览摘要>
+  provider webdav
   unit bind <unitId> --path <dir> [--profile project|file] [--preview] [--base <verified-snapshot>]
   bindings
   cache list | cache fetch|evict <unitId> <snapshotId> --path <relative-file>
@@ -89,6 +92,10 @@ func run(ctx context.Context, args []string) (any, error) {
 	}
 	defer s.Close()
 	switch args[0] {
+	case "provider":
+		return providerCommand(ctx, s, args[1:])
+	case "workspace":
+		return workspaceCommand(ctx, s, args[1:])
 	case "settings":
 		if len(args) < 2 || args[1] != "transfers" {
 			return nil, errors.New(help)

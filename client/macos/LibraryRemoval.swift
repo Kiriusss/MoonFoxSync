@@ -27,6 +27,10 @@ extension ReadingRoom {
         if local || nas {
             Menu {
                 if local {
+                    Button("释放原位置空间…") {
+                        let path=model.bindings.first(where: { $0.unitId == unit })?.path
+                        shell.workspaceRequest=WorkspaceRequest(directory:path)
+                    }
                     Button("移除本机记录…", role: .destructive) { deletionTarget = .forget(unit, name) }
                 }
                 if nas {

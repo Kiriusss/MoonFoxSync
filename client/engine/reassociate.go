@@ -50,6 +50,12 @@ func (s *Store) reassociateWithPolicy(ctx context.Context, oldUnit, targetUnit, 
 		return Binding{}, lockErr
 	}
 	defer activity.Close()
+	if err := s.guardWorkspace(ctx, oldUnit); err != nil {
+		return Binding{}, err
+	}
+	if err := s.guardWorkspace(ctx, targetUnit); err != nil {
+		return Binding{}, err
+	}
 	var result Binding
 	if validID(oldUnit) != nil || validID(targetUnit) != nil || oldUnit == targetUnit || path == "" {
 		return result, errors.New("请明确选择原项目、不同的目标共享项目以及已绑定目录")
@@ -141,7 +147,7 @@ func (s *Store) reassociateWithPolicy(ctx context.Context, oldUnit, targetUnit, 
 		if len(expected) != 64 {
 			return result, errors.New("目标服务不支持共享项目基线验证")
 		}
-		if observed, e = baselineFingerprint(ctx, result, targetPolicy); e != nil {
+		if observed, e = s.baselineFingerprint(ctx, result, targetPolicy); e != nil {
 			return result, e
 		}
 		result.ProtectHead = expected != observed

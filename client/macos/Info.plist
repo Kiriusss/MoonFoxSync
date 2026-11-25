@@ -9,9 +9,14 @@
 <key>CFBundleExecutable</key><string>Xinhu</string>
 <key>CFBundleIconFile</key><string>Avatar.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>10</string>
-<key>CFBundleShortVersionString</key><string>0.4.6</string>
+<key>CFBundleVersion</key><string>12</string>
+<key>CFBundleShortVersionString</key><string>0.4.8</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>MoonFoxAppGroup</key><string>group.local.kirius.xinhu</string>
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleURLName</key><string>local.kirius.xinhu.workspace</string>
+<key>CFBundleURLSchemes</key><array><string>xinhu-sync</string></array>
+</dict></array>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

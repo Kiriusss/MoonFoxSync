@@ -86,6 +86,7 @@ func Open(home string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS tree_totals(digest TEXT PRIMARY KEY, bytes INTEGER NOT NULL, files INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS transfer_settings(id INTEGER PRIMARY KEY CHECK(id=1), uploads INTEGER NOT NULL CHECK(uploads BETWEEN 1 AND 50), downloads INTEGER NOT NULL CHECK(downloads BETWEEN 1 AND 50));
  INSERT OR IGNORE INTO transfer_settings VALUES(1,4,4);
+ CREATE TABLE IF NOT EXISTS workspace_archives(slot TEXT PRIMARY KEY,unit TEXT NOT NULL,snapshot TEXT NOT NULL,member TEXT NOT NULL,source_path TEXT NOT NULL UNIQUE,sha TEXT NOT NULL,size INTEGER NOT NULL,device TEXT NOT NULL,phase TEXT NOT NULL,generation TEXT NOT NULL,entry BLOB NOT NULL,dir_id TEXT NOT NULL,UNIQUE(unit,member));
  CREATE TABLE IF NOT EXISTS deferred_spool_gc(kind TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(kind,digest));
  CREATE TABLE IF NOT EXISTS local_cleanup_plans(scope TEXT PRIMARY KEY,token TEXT NOT NULL UNIQUE,plan BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS local_cleanup(token TEXT NOT NULL,kind TEXT NOT NULL,key TEXT NOT NULL,digest TEXT NOT NULL,size INTEGER NOT NULL,PRIMARY KEY(token,kind,key,digest));
@@ -210,6 +211,11 @@ func (s *Store) bindSourceWithPolicy(ctx context.Context, unit, path, profile st
 		return Binding{}, lockErr
 	}
 	defer activity.Close()
+	if !preview {
+		if err := s.guardWorkspace(ctx, unit); err != nil {
+			return Binding{}, err
+		}
+	}
 	initial := defaultIgnored()
 	if requested != nil {
 		initial = *requested
@@ -298,7 +304,7 @@ func (s *Store) bindSourceWithPolicy(ctx context.Context, unit, path, profile st
 			if len(expected) != 64 {
 				return b, errors.New("服务端不支持共享项目基线校验，请升级梦枢天罗")
 			}
-			if observed, e = baselineFingerprint(ctx, b, initial); e != nil {
+			if observed, e = s.baselineFingerprint(ctx, b, initial); e != nil {
 				return b, e
 			}
 			b.ProtectHead = observed != expected

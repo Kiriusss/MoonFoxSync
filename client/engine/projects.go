@@ -135,6 +135,9 @@ func (s *Store) CheckoutProject(ctx context.Context, unit, destination string) (
 		return Binding{}, lockErr
 	}
 	defer activity.Close()
+	if err := s.guardWorkspace(ctx, unit); err != nil {
+		return Binding{}, err
+	}
 	var result Binding
 	if e := validID(unit); e != nil {
 		return result, e

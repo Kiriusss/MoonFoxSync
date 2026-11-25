@@ -80,6 +80,7 @@ struct ReadingRoom: View {
          .sheet(item: $gitSyncProject) { project in
              if let path = project.path { GitSyncSheet(model: model, name: project.name, path: path) }
          }
+         .sheet(item: $shell.workspaceRequest) { WorkspaceSpace(request:$0) }
          .sheet(item: $deletionTarget) { target in
              LibraryRemovalSheet(model: model, target: target)
          }

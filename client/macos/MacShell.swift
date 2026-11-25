@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSWindowDelegate {
     @Published var focusProject: String?
+    @Published var workspaceRequest: WorkspaceRequest?
     private var projectsTimer: Timer?
     @Published var page: DesktopPage = .overview
     @Published private(set) var startAtLogin = false
@@ -220,6 +221,11 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
         NSApp.setActivationPolicy(.accessory)
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let path = urls.compactMap({ FinderDomain.hydrationPath(from: $0) }).first else { return }
+        openMain(.cache)
+        workspaceRequest=WorkspaceRequest(source:path)
+    }
     func applicationWillTerminate(_ notification: Notification) { transferMonitor?.cancel(); animationTimer?.invalidate(); projectsTimer?.invalidate(); panel.close(); scheduler.stop() }
 
     @objc private func showOverview() { openMain() }

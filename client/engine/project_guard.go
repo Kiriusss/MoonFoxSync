@@ -15,7 +15,7 @@ var fingerprintQuery = url.Values{"fingerprint": {"true"}}
 // Fingerprint exactly the files the Git capture will include. Eagerly checking an
 // existing clone at bind time allows later legitimate edits even before the
 // first automatic scan. Delay is local disk I/O, never a download of file bodies.
-func baselineFingerprint(ctx context.Context, b Binding, policy IgnoredPolicy) (string, error) {
+func (s *Store) baselineFingerprint(ctx context.Context, b Binding, policy IgnoredPolicy) (string, error) {
 	dir, name := b.Path, "."
 	if b.Profile == "file" {
 		dir, name = filepath.Dir(b.Path), filepath.Base(b.Path)
@@ -25,7 +25,10 @@ func baselineFingerprint(ctx context.Context, b Binding, policy IgnoredPolicy) (
 		return "", e
 	}
 	defer root.Close()
-	c := capture{ctx: ctx, root: root, timeless: true}
+	c := capture{ctx: ctx, root: root, timeless: true, store: s}
+	if err := c.prepareArchives(b); err != nil {
+		return "", err
+	}
 	if b.Profile == "project" {
 		if _, e = c.projectMembers(dir, policy); e != nil {
 			return "", e
@@ -34,6 +37,9 @@ func baselineFingerprint(ctx context.Context, b Binding, policy IgnoredPolicy) (
 	entry, e := c.entry(name)
 	if e != nil {
 		return "", e
+	}
+	if err := c.checkArchiveCoverage(); err != nil {
+		return "", err
 	}
 	for _, check := range c.checks {
 		stat, err := root.Lstat(check.path)

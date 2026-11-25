@@ -37,6 +37,7 @@ type statCheck struct {
 	info fs.FileInfo
 }
 type capture struct {
+	archives map[string]WorkspaceFile
 	timeless bool
 	ctx      context.Context
 	store    *Store
@@ -51,7 +52,7 @@ func (s *Store) objectPath(r objectfmt.Ref) string {
 	return filepath.Join(s.Home, "spool", r.Kind, r.Digest[:2], r.Digest)
 }
 func (c *capture) put(r objectfmt.Ref, data []byte) error {
-	if c.store == nil {
+	if c.store == nil || c.timeless {
 		return c.ctx.Err()
 	} // A restored worktree can be fingerprinted without copying the objects again.
 	if e := c.ctx.Err(); e != nil {
@@ -187,15 +188,40 @@ func (c *capture) entry(p string) (objectfmt.Entry, error) {
 	if e != nil {
 		return result, e
 	}
-	c.checks = append(c.checks, statCheck{p, info})
+	archive, managed := c.archives[filepath.ToSlash(p)]
+	if !managed { // prepareArchives already recorded every registered link, including excluded files.
+		c.checks = append(c.checks, statCheck{p, info})
+	}
 	result.Name = filepath.Base(p)
 	if !c.timeless {
 		result.MtimeNS = info.ModTime().UnixNano()
+	}
+	if managed && info.Mode()&os.ModeSymlink == 0 {
+		return result, fmt.Errorf("采集期间原位置按需文件已被替换：%s", p)
 	}
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
 		result.Kind = "symlink"
 		result.Target, e = c.root.Readlink(p)
+		if e != nil {
+			return result, e
+		}
+		if managed {
+			if result.Target != c.store.workspaceTarget(archive) {
+				return result, fmt.Errorf("采集期间原位置按需链接已改变：%s", p)
+			}
+			delete(c.archives, filepath.ToSlash(p))
+			return c.archivedEntry(archive)
+		}
+		if c.store != nil {
+			target := result.Target
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(c.root.Name(), filepath.Dir(p), target)
+			}
+			if inside(filepath.Join(c.store.Home, "workspace-volume"), target) {
+				return result, fmt.Errorf("未登记的按需卷链接不能作为项目内容发布：%s", p)
+			}
+		}
 	case info.Mode().IsRegular():
 		result.Kind = "file"
 		result.Executable = info.Mode().Perm()&0111 != 0
@@ -217,6 +243,11 @@ func (c *capture) entry(p string) (objectfmt.Entry, error) {
 		f, err := c.root.Open(p)
 		if err != nil {
 			return result, err
+		}
+		opened, err := f.Stat()
+		if err != nil || !sameFile(info, opened) {
+			f.Close()
+			return result, fmt.Errorf("采集期间目录已变化：%s", p)
 		}
 		names, err := f.Readdirnames(-1)
 		f.Close()
@@ -312,6 +343,9 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 		return v, errors.New("来源目录已更换或卸载，请恢复原目录")
 	}
 	c := capture{ctx: ctx, store: s, root: r, refs: map[objectfmt.Ref]int{}}
+	if e = c.prepareArchives(b); e != nil {
+		return v, e
+	}
 	ignored := defaultIgnored()
 	if b.Profile == "project" {
 		ignored, e = readIgnored(ctx, s.db, unit)
@@ -344,6 +378,9 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 		item, e = c.entry(name)
 	}
 	if e != nil {
+		return v, e
+	}
+	if e = c.checkArchiveCoverage(); e != nil {
 		return v, e
 	}
 	rootDigest := item.Digest

@@ -290,7 +290,7 @@ func (s *Store) SetIgnoredPolicy(ctx context.Context, unit string, policy Ignore
 	}
 	var observed string
 	if existingProof {
-		if observed, e = baselineFingerprint(ctx, b, policy); e != nil {
+		if observed, e = s.baselineFingerprint(ctx, b, policy); e != nil {
 			return e
 		}
 	}
