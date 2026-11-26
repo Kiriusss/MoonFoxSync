@@ -360,7 +360,7 @@ func (s *Store) RemoveLocal(ctx context.Context, unit, token string) (LocalRemov
 			return p, err
 		}
 	}
-	for _, table := range []string{"codex_preset", "schedules", "ignored_selection", "git_sources", "git_status_cache", "checkout_base", "checkout_journal", "project_proofs", "binding_roots", "bindings"} {
+	for _, table := range []string{"local_deleted_sources", "codex_preset", "schedules", "ignored_selection", "git_sources", "git_status_cache", "checkout_base", "checkout_journal", "project_proofs", "binding_roots", "bindings"} {
 		if _, err = tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE ?1='' OR unit=?1", unit); err != nil {
 			return p, err
 		}

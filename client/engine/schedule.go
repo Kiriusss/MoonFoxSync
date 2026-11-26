@@ -90,6 +90,9 @@ func (s *Store) scanDue(ctx context.Context, b Binding, p AutoPolicy) (bool, err
 	return n == 1, e
 }
 func (s *Store) CaptureDue(ctx context.Context, b Binding, p AutoPolicy) (*Snapshot, error) {
+	if b.LocalFilesDeleted {
+		return nil, nil
+	}
 	if b.Profile == "codex" {
 		lock, e := s.presetLock()
 		if e != nil {
@@ -106,6 +109,9 @@ func (s *Store) CaptureDue(ctx context.Context, b Binding, p AutoPolicy) (*Snaps
 		return nil, e
 	}
 	v, e := s.Snapshot(ctx, b.Unit, "")
+	if errors.Is(e, errLocalFilesDeleted) {
+		return nil, nil
+	}
 	if b.Profile == "codex" {
 		s.recordPresetError(ctx, e)
 	}

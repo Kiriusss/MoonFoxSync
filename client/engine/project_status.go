@@ -60,10 +60,12 @@ func (s *Store) ProjectStates(ctx context.Context, refreshGit bool) (ProjectRepo
 		return result, err
 	}
 	projects := map[string]*ProjectState{}
+	paused := map[string]bool{}
 	for _, b := range bindings {
 		if b.Profile != "project" {
 			continue
 		}
+		paused[b.Unit] = b.LocalFilesDeleted
 		projects[b.Unit] = &ProjectState{generation: b.generation, Unit: b.Unit, Name: filepath.Base(b.Path), Path: b.Path, Base: b.Base, ProtectHead: b.ProtectHead, Kind: "project", NAS: "unknown"}
 	}
 	byID := map[string]Snapshot{}
@@ -162,6 +164,9 @@ func (s *Store) ProjectStates(ctx context.Context, refreshGit bool) (ProjectRepo
 		}
 	}
 	for _, p := range projects {
+		if paused[p.Unit] {
+			p.NAS = "localFilesDeleted"
+		}
 		if p.LastActivity == "" && p.Path != "" {
 			if info, e := os.Stat(p.Path); e == nil {
 				p.LastActivity = info.ModTime().UTC().Format(time.RFC3339Nano)
@@ -189,7 +194,7 @@ func (s *Store) ProjectStates(ctx context.Context, refreshGit bool) (ProjectRepo
 		}()
 	}
 	for _, p := range result.Items {
-		if p.Path != "" {
+		if p.Path != "" && !paused[p.Unit] {
 			ch <- p
 		}
 	}

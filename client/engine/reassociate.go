@@ -11,7 +11,7 @@ import (
 )
 
 func clearSourceSettings(ctx context.Context, tx *sql.Tx, unit string) error {
-	for _, table := range []string{"ignored_selection", "binding_roots", "git_sources", "project_proofs", "checkout_base", "git_status_cache"} {
+	for _, table := range []string{"local_deleted_sources", "ignored_selection", "binding_roots", "git_sources", "project_proofs", "checkout_base", "git_status_cache"} {
 		if _, e := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE unit=?", unit); e != nil {
 			return e
 		}
@@ -94,6 +94,9 @@ func (s *Store) reassociateWithPolicy(ctx context.Context, oldUnit, targetUnit, 
 	old, e := s.binding(ctx, oldUnit)
 	if e != nil || old.Profile != "project" || old.Path != full {
 		return result, errors.New("该目录与明确指定的原项目绑定不符")
+	}
+	if old.LocalFilesDeleted {
+		return result, errLocalFilesDeleted
 	}
 	var queued, occupied, previouslyGit bool
 	var marker string

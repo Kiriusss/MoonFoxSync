@@ -284,6 +284,9 @@ func (s *Store) AutoSync(ctx context.Context, v Snapshot, p AutoPolicy) (*Receip
 	if e != nil {
 		return nil, e
 	}
+	if b.LocalFilesDeleted {
+		return nil, ErrWaiting
+	}
 	if b.Profile == "codex" {
 		lock, e := s.presetLock()
 		if e != nil {

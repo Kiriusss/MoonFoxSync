@@ -33,6 +33,7 @@ struct DesktopProject: Decodable, Identifiable {
     var gitLabel: String? { if gitError != nil { return "Git 检查失败" }; return git?.label }
     var nasLabel: String {
         switch nasState {
+        case "localFilesDeleted": return "本机同步已暂停"
         case "server_only": return head == nil ? "NAS 空项目" : "仅在 NAS"
         case "current": return "快照已对齐"
         case "pending", "local_only": return "待上传" + (pending > 0 ? " · \(pending)" : "")
@@ -119,6 +120,10 @@ extension ReadingRoom {
                         .font(.caption).foregroundStyle(DeskColor.muted).lineLimit(2)
                 } else {
                     Text(p.path == nil ? "共享资料库" : "项目目录").font(.caption).foregroundStyle(DeskColor.muted)
+                }
+                if detail && p.nasState == "localFilesDeleted" {
+                    Text("可以从版本历史取回文件，或用「接收 NAS 版本…」恢复到新目录并继续同步。")
+                        .font(.caption2).foregroundStyle(DeskColor.muted)
                 }
                 if detail && p.nasState=="protected" {
                     Text("本机内容与共享基线不同；从这里上传会保留为分叉。")

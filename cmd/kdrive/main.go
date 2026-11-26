@@ -20,6 +20,7 @@ const help = `心狐同步 · kdrive
   project discover|ignored|git --path <dir> [--fetch / --min-bytes N]
   project list <共享空间ID>
   project git-sync --path <dir> [--apply --expected-head <SHA> --expected-upstream <SHA> --plan-token <令牌>]
+  local delete-files <资料库ID> --source <已确认的本机绑定路径>
   library delete-plan|forget-plan <资料库ID> | library reset-plan
   library delete <资料库ID> --name <原名> --token <令牌> | library forget <资料库ID> --token <令牌> | library reset --token <令牌>
   project import <共享空间ID> --path <dir> (--existing <目标项目ID> | --new --request <UUID> | --key <共享标识>) [--base <已核对版本>] [--include <Git忽略的相对路径>]
@@ -118,6 +119,19 @@ func run(ctx context.Context, args []string) (any, error) {
 			}
 		})
 		return s.SetTransferSettings(ctx, u, d)
+	case "local":
+		if len(args) < 3 || args[1] != "delete-files" {
+			return nil, errors.New("local delete-files <资料库ID> --source <已确认的本机绑定路径>")
+		}
+		f := flags("local delete-files")
+		source := f.String("source", "", "")
+		if err := parse(f, args[3:]); err != nil {
+			return nil, err
+		}
+		if *source == "" {
+			return nil, errors.New("需要明确指定当前项目的本机路径")
+		}
+		return s.DeleteLocalFiles(ctx, args[2], *source)
 	case "library":
 		return libraryCommands(ctx, s, args[1:])
 	case "timeline":

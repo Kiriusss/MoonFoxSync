@@ -27,9 +27,12 @@ extension ReadingRoom {
         if local || nas {
             Menu {
                 if local {
-                    Button("释放原位置空间…") {
-                        let path=model.bindings.first(where: { $0.unitId == unit })?.path
-                        shell.workspaceRequest=WorkspaceRequest(directory:path)
+                    if let binding = model.bindings.first(where: { $0.unitId == unit }),
+                       binding.profile == "project" || binding.profile == "file" {
+                        Button("删除本机文件…", role: .destructive) {
+                            let isGit = model.projects.contains { $0.id == unit && $0.kind == "git" }
+                            localFilesTarget = LocalFilesTarget(name: name, binding: binding, isGit: isGit)
+                        }
                     }
                     Button("移除本机记录…", role: .destructive) { deletionTarget = .forget(unit, name) }
                 }

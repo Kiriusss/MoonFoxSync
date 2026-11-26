@@ -62,6 +62,12 @@ func (s *Store) WorkspaceFiles(ctx context.Context) ([]WorkspaceFile, error) {
 }
 func (s *Store) guardWorkspace(ctx context.Context, unit string) error {
 	var any bool
+	if e := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM local_delete_intents WHERE ?1='' OR unit=?1)", unit).Scan(&any); e != nil {
+		return e
+	}
+	if any {
+		return errors.New("本机文件删除尚未完成，请先在原项目重试「删除本机文件」")
+	}
 	if e := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM workspace_archives WHERE ?='' OR unit=?)", unit, unit).Scan(&any); e != nil {
 		return e
 	}

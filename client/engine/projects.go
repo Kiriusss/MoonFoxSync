@@ -294,6 +294,9 @@ func (s *Store) CheckoutProject(ctx context.Context, unit, destination string) (
 	}
 	// Git include overrides belong to the old source. A restored plain working
 	// tree already contains the published files and has no Git ignore index.
+	if _, e = tx.ExecContext(ctx, "DELETE FROM local_deleted_sources WHERE unit=?", unit); e != nil {
+		return result, e
+	}
 	if _, e = tx.ExecContext(ctx, "DELETE FROM ignored_selection WHERE unit=?", unit); e != nil {
 		return result, e
 	}

@@ -20,6 +20,7 @@ cp client/macos/WorkspaceMount/local.kirius.xinhu.workspace.plist "$app/Contents
 cp client/macos/Login/local.kirius.xinhu.login.plist "$app/Contents/Library/LaunchAgents/"
 cp -R client/macos/*.lproj "$app/Contents/Resources/"
 cp assets/brand/xinhu.png "$app/Contents/Resources/Avatar.png"
+cp assets/brand/tail-mark.png "$app/Contents/Resources/TailMark.png"
 cp assets/brand/tray/TrayFox*.png "$app/Contents/Resources/"
 iconbuild=$(mktemp -d)
 trap 'rm -rf "$iconbuild"' EXIT

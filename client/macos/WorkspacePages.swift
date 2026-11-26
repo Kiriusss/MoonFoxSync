@@ -48,18 +48,22 @@ extension ReadingRoom {
         } else {
             VStack(alignment: .leading, spacing: 13) {
                 if lib.role == "sync" {
+                    let binding = model.bindings.first { $0.unitId == lib.id }
                     HStack {
                         Menu("绑定本机来源") {
                             Button("项目目录…") { stageBinding(lib,"project") }
                             Button("单个文件…") { stageBinding(lib,"file") }
                         }.fixedSize()
-                        if let binding = model.bindings.first(where: { $0.unitId == lib.id }) {
+                        if let binding {
                             Text(binding.path).font(.caption).foregroundStyle(DeskColor.muted)
                                 .lineLimit(1).truncationMode(.middle).help(binding.path)
                         }
+                        if binding?.localFilesDeleted == true {
+                            Text("本机同步已暂停").font(.caption).foregroundStyle(DeskColor.accent)
+                        }
                         Spacer()
                         Button("保存快照") { name = ""; draftUnit = lib; checkpoint = true }
-                            .buttonStyle(DeskAction(primary:true)).disabled(!model.bindings.contains { $0.unitId == lib.id })
+                            .buttonStyle(DeskAction(primary:true)).disabled(binding == nil || binding?.localFilesDeleted == true)
                     }.disabled(model.busy)
                 }
                 HStack {

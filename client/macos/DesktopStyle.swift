@@ -17,6 +17,36 @@ enum DeskColor {
     static let accent = adaptive(0x983E57, 0xE89AAE)
     static let selection = adaptive(0xEFDFE3, 0x49323C)
 }
+/// Keep both the white fur and the dark tip legible over translucent materials.
+struct TailMark: View {
+    @Environment(\.colorScheme) private var scheme
+    private static let artwork: NSImage = {
+        if let url = Bundle.main.url(forResource: "TailMark", withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        return Bundle.main.image(forResource: "Avatar")
+            ?? NSImage(systemSymbolName: "sparkle", accessibilityDescription: nil)!
+    }()
+
+    var body: some View {
+        Canvas { context, size in
+            let side = min(size.width, size.height) - 2
+            let bounds = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
+            let artwork = context.resolve(Image(nsImage: Self.artwork).renderingMode(.original))
+            var edge = artwork
+            edge.shading = .color(scheme == .dark ? Color.white.opacity(0.64) : Color(red: 0.23, green: 0.18, blue: 0.22).opacity(0.74))
+            for step in 0..<8 {
+                let angle = Double(step) * .pi / 4
+                context.draw(edge, in: bounds.offsetBy(dx: 0.8 * cos(angle), dy: 0.8 * sin(angle)))
+            }
+            context.draw(artwork, in: bounds)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .accessibilityHidden(true)
+    }
+}
+
 extension View {
     func deskCard() -> some View {
         background(RoundedRectangle(cornerRadius: 13).fill(DeskColor.surface))

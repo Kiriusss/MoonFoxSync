@@ -1,4 +1,5 @@
 import AppKit
+import IOKit.pwr_mgt
 import ServiceManagement
 import SwiftUI
 
@@ -11,6 +12,31 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
     @Published private(set) var startAtLogin = false
     @Published private(set) var loginNeedsApproval = false
     @Published private(set) var loginMessage = ""
+
+    @Published private var wakeAssertion: IOPMAssertionID?
+    @Published private(set) var wakeError = ""
+    var keepingAwake: Bool { wakeAssertion != nil }
+
+    func toggleKeepAwake() {
+        wakeError = ""
+        if let id = wakeAssertion {
+            if IOPMAssertionRelease(id) == kIOReturnSuccess {
+                wakeAssertion = nil
+            } else {
+                wakeError = "未能关闭保持唤醒，请重试。"
+            }
+            return
+        }
+        var id = IOPMAssertionID(0)
+        let status = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+                                                 IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                                 "心狐同步 · 保持唤醒" as CFString, &id)
+        if status == kIOReturnSuccess {
+            wakeAssertion = id
+        } else {
+            wakeError = "系统未能开启保持唤醒，请重试。"
+        }
+    }
 
     let model = LibraryModel()
     let scheduler = Schedule()
@@ -26,7 +52,12 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
     private var trayItem: NSStatusItem?
     private var transferMonitor: Task<Void, Never>?
     private var animationTimer: Timer?
-    private lazy var idleIcon = menuIcon("TrayFoxIdle")
+    private lazy var idleIcon: NSImage? = {
+        if let fox = menuIcon("TrayFoxIdle") { return fox }
+        let fallback = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "心狐同步")
+        fallback?.isTemplate = true
+        return fallback
+    }()
     private lazy var runningIcons = (0..<8).compactMap { menuIcon("TrayFoxRun" + String($0)) }
     private var animationFrame = 0
 
@@ -35,7 +66,7 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
               let image = NSImage(contentsOf: url), image.size.width > 0, image.size.height > 0 else { return nil }
         let scale = min(27 / image.size.width, 18 / image.size.height)
         image.size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
-        image.isTemplate = false
+        image.isTemplate = true
         return image
     }
     private let silent = ProcessInfo.processInfo.arguments.contains("--login-item")
@@ -54,7 +85,7 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
         if let button = item.button {
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleNone
-            button.image = idleIcon ?? NSImage(systemSymbolName: "hare.fill", accessibilityDescription: "心狐同步")
+            button.image = idleIcon
             button.setAccessibilityLabel("心狐同步")
             button.toolTip = "心狐同步 · 打开同步面板"
             button.target = self
@@ -226,7 +257,14 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
         openMain(.cache)
         workspaceRequest=WorkspaceRequest(source:path)
     }
-    func applicationWillTerminate(_ notification: Notification) { transferMonitor?.cancel(); animationTimer?.invalidate(); projectsTimer?.invalidate(); panel.close(); scheduler.stop() }
+    func applicationWillTerminate(_ notification: Notification) {
+        if let id = wakeAssertion { IOPMAssertionRelease(id) }
+        transferMonitor?.cancel()
+        animationTimer?.invalidate()
+        projectsTimer?.invalidate()
+        panel.close()
+        scheduler.stop()
+    }
 
     @objc private func showOverview() { openMain() }
     @objc private func showSettings() { openMain(.settings) }
@@ -263,22 +301,36 @@ private struct QuickPanel: View {
     @ObservedObject var shell: DesktopShell
     @ObservedObject var model: LibraryModel
     @ObservedObject var schedule: Schedule
-    private let accent = Color(red: 0.69, green: 0.23, blue: 0.39)
+    private let accent = DeskColor.accent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                if let img = Bundle.main.image(forResource: "Avatar") {
-                    Image(nsImage: img).resizable().scaledToFit().frame(width: 42, height: 42)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                Button(action: shell.toggleKeepAwake) {
+                    TailMark().frame(width: 42, height: 42)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("keepAwakeLogo")
+                .accessibilityLabel("保持唤醒")
+                .accessibilityValue(shell.keepingAwake ? "已开启" : "已关闭")
+                .help(shell.keepingAwake ? "点击关闭保持唤醒" : "点击狐尾，让 Mac 保持唤醒")
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("心狐同步").font(.headline)
+                    HStack(spacing: 6) {
+                        Text("心狐同步").font(.system(size: 16, weight: .semibold))
+                        if shell.keepingAwake {
+                            Label("保持唤醒", systemImage: "sun.max.fill")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
+                    }
                     Text("梦枢天罗 · " + model.connectionLabel).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { shell.openMain(.settings) } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.borderless).help("打开设置").accessibilityLabel("打开设置")
+            }
+            if !shell.wakeError.isEmpty {
+                Text(shell.wakeError).font(.caption).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
@@ -308,7 +360,9 @@ private struct QuickPanel: View {
                 if let error = model.pendingSyncErrors.first {
                     Text(error).font(.caption2).foregroundStyle(.secondary).lineLimit(2).help(error)
                 }
-            }.padding(10).background(accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
+            }
+            .padding(.vertical, 9).padding(.horizontal, 12)
+            .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             VStack(alignment:.leading,spacing:7) {
                 HStack {
                     Text("最近项目").font(.caption).foregroundStyle(.secondary)
@@ -359,7 +413,8 @@ private struct QuickPanel: View {
                     .buttonStyle(.borderless).help("退出心狐同步").accessibilityLabel("退出心狐同步")
             }.controlSize(.small)
         }
-        .padding(16).frame(width: 304)
+        .buttonBorderShape(.capsule)
+        .padding(18).frame(width: 322)
     }
 }
 

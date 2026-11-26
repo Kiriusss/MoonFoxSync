@@ -80,6 +80,7 @@ struct LocalConnection: Decodable {
 }
 struct LocalBinding: Decodable {
     let unitId, path, profile: String
+    let localFilesDeleted: Bool?
 }
 
 @MainActor

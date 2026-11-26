@@ -246,6 +246,10 @@ func trackedWorkspacePaths(ctx context.Context, base string, folder bool) (works
 }
 
 func (s *Store) newWorkspacePlanner(ctx context.Context, source string, folder bool) (*workspacePlanner, error) {
+	return s.workspacePlannerFor(ctx, source, folder, true)
+}
+
+func (s *Store) workspacePlannerFor(ctx context.Context, source string, folder, protectGitTypes bool) (*workspacePlanner, error) {
 	b, _, err := s.workspaceSource(ctx, source)
 	if err != nil {
 		return nil, err
@@ -275,6 +279,10 @@ func (s *Store) newWorkspacePlanner(ctx context.Context, source string, folder b
 		seen[*head] = true
 		snap, err := s.snap(ctx, *head)
 		if errors.Is(err, sql.ErrNoRows) {
+			if !protectGitTypes {
+				// A binding received from another device can start at a remote-only base.
+				p.snapshot = Snapshot{ID: *head, Unit: b.Unit}
+			}
 			break
 		}
 		if err != nil {
@@ -305,9 +313,11 @@ func (s *Store) newWorkspacePlanner(ctx context.Context, source string, folder b
 			return nil, e
 		}
 	}
-	p.tracked, err = trackedWorkspacePaths(ctx, base, folder)
-	if err != nil {
-		return nil, err
+	if protectGitTypes {
+		p.tracked, err = trackedWorkspacePaths(ctx, base, folder)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if folder {
 		rows, err := s.listWorkspace(ctx, b.Unit)

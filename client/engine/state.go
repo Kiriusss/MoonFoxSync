@@ -98,6 +98,8 @@ func Open(home string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS traffic(id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, at INTEGER NOT NULL, charged INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS account (id INTEGER PRIMARY KEY CHECK(id=1), url TEXT NOT NULL, ca BLOB, device TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS bindings ` + bindingColumns + `;
+ CREATE TABLE IF NOT EXISTS local_deleted_sources(unit TEXT PRIMARY KEY REFERENCES bindings(unit),generation TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS local_delete_intents(unit TEXT PRIMARY KEY REFERENCES bindings(unit),generation TEXT NOT NULL,intent BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS schedules(unit TEXT PRIMARY KEY REFERENCES bindings(unit),policy TEXT NOT NULL,minutes INTEGER NOT NULL,last_scan INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS codex_preset(id INTEGER PRIMARY KEY CHECK(id=1),unit TEXT NOT NULL REFERENCES bindings(unit),scope TEXT NOT NULL,enabled INTEGER NOT NULL,last_error TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS reassociations(path TEXT PRIMARY KEY,previous TEXT NOT NULL,target TEXT NOT NULL,confirmed TEXT NOT NULL,generation TEXT NOT NULL);
@@ -123,15 +125,16 @@ func Open(home string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.db.Close() }
 
-const bindingsQuery = "SELECT unit,path,profile,base,generation,EXISTS(SELECT 1 FROM project_proofs p WHERE p.unit=bindings.unit AND p.expected<>p.observed AND NOT EXISTS(SELECT 1 FROM snapshots z WHERE z.unit=p.unit AND z.parent=p.base AND z.state='published')) FROM bindings WHERE path IS NOT NULL"
+const bindingsQuery = "SELECT unit,path,profile,base,generation,EXISTS(SELECT 1 FROM project_proofs p WHERE p.unit=bindings.unit AND p.expected<>p.observed AND NOT EXISTS(SELECT 1 FROM snapshots z WHERE z.unit=p.unit AND z.parent=p.base AND z.state='published')),EXISTS(SELECT 1 FROM local_deleted_sources d WHERE d.unit=bindings.unit AND d.generation=bindings.generation) FROM bindings WHERE path IS NOT NULL"
 
 type Binding struct {
-	generation  string
-	ProtectHead bool    `json:"protectHead,omitempty"`
-	Unit        string  `json:"unitId"`
-	Path        string  `json:"path"`
-	Profile     string  `json:"profile"`
-	Base        *string `json:"baseSnapshotId"`
+	generation        string
+	LocalFilesDeleted bool    `json:"localFilesDeleted,omitempty"`
+	ProtectHead       bool    `json:"protectHead,omitempty"`
+	Unit              string  `json:"unitId"`
+	Path              string  `json:"path"`
+	Profile           string  `json:"profile"`
+	Base              *string `json:"baseSnapshotId"`
 }
 
 func (s *Store) binding(ctx context.Context, unit string) (Binding, error) {
@@ -139,7 +142,7 @@ func (s *Store) binding(ctx context.Context, unit string) (Binding, error) {
 	if err := validID(unit); err != nil {
 		return b, err
 	}
-	err := s.db.QueryRowContext(ctx, bindingsQuery+" AND unit=?", unit).Scan(&b.Unit, &b.Path, &b.Profile, &b.Base, &b.generation, &b.ProtectHead)
+	err := s.db.QueryRowContext(ctx, bindingsQuery+" AND unit=?", unit).Scan(&b.Unit, &b.Path, &b.Profile, &b.Base, &b.generation, &b.ProtectHead, &b.LocalFilesDeleted)
 	return b, err
 }
 func (s *Store) Bindings(ctx context.Context) ([]Binding, error) {
@@ -151,7 +154,7 @@ func (s *Store) Bindings(ctx context.Context) ([]Binding, error) {
 	out := []Binding{}
 	for rows.Next() {
 		var b Binding
-		if e = rows.Scan(&b.Unit, &b.Path, &b.Profile, &b.Base, &b.generation, &b.ProtectHead); e != nil {
+		if e = rows.Scan(&b.Unit, &b.Path, &b.Profile, &b.Base, &b.generation, &b.ProtectHead, &b.LocalFilesDeleted); e != nil {
 			return nil, e
 		}
 		out = append(out, b)
@@ -198,7 +201,11 @@ func (s *Store) Bind(ctx context.Context, unit, path, profile string, preview bo
 	if profile != "file" && profile != "project" {
 		return Binding{}, errors.New("请选择普通文件或项目来源")
 	}
-	return s.bindSource(ctx, unit, path, profile, preview, expectedBase)
+	b, err := s.bindSource(ctx, unit, path, profile, preview, expectedBase)
+	if err != nil || preview || !b.LocalFilesDeleted {
+		return b, err
+	}
+	return s.resumeRestoredBinding(ctx, b, expectedBase)
 }
 
 func (s *Store) bindSource(ctx context.Context, unit, path, profile string, preview bool, expectedBase string) (Binding, error) {
@@ -321,7 +328,7 @@ func (s *Store) bindSourceWithPolicy(ctx context.Context, unit, path, profile st
 	}
 	for rows.Next() {
 		var old Binding
-		if e = rows.Scan(&old.Unit, &old.Path, &old.Profile, &old.Base, &old.generation, &old.ProtectHead); e != nil {
+		if e = rows.Scan(&old.Unit, &old.Path, &old.Profile, &old.Base, &old.generation, &old.ProtectHead, &old.LocalFilesDeleted); e != nil {
 			rows.Close()
 			return b, e
 		}

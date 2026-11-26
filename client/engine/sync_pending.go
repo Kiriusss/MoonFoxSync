@@ -56,14 +56,37 @@ func (s *Store) SyncPending(ctx context.Context, policy AutoPolicy) (PendingSync
 		return result, err
 	}
 	names := make(map[string]string, len(bindings))
+	paused := make(map[string]bool)
 	for _, b := range bindings {
+		if b.LocalFilesDeleted {
+			paused[b.Unit] = true
+		}
 		names[b.Unit] = filepath.Base(b.Path)
+	}
+	readyItems := items[:0]
+	for _, v := range items {
+		if paused[v.Unit] {
+			result.Skipped++
+		} else {
+			readyItems = append(readyItems, v)
+		}
+	}
+	items = readyItems
+	if len(items) == 0 {
+		return result, nil
 	}
 	remote, home, err := s.manualRemote(ctx, policy)
 	if err != nil {
 		return result, err
 	}
 	send := func(v Snapshot, request string) (*Receipt, error) {
+		// The project lock in withUpload spans this check and the upload, so a
+		// pause installed after the batch began still excludes this project.
+		if paused, err := s.localDeletionPaused(ctx, v.Unit); err != nil {
+			return nil, err
+		} else if paused {
+			return nil, errLocalFilesDeleted
+		}
 		receipt, err := s.sendSnapshot(ctx, remote, v, request)
 		var network *url.Error
 		if home && ctx.Err() == nil && errors.As(err, &network) {
@@ -106,7 +129,7 @@ func (s *Store) SyncPending(ctx context.Context, policy AutoPolicy) (PendingSync
 		}
 		_, reused, err := s.withUpload(ctx, v.Unit, v.ID, send)
 		switch {
-		case errors.Is(err, sql.ErrNoRows), errors.Is(err, errProjectRemoving):
+		case errors.Is(err, sql.ErrNoRows), errors.Is(err, errProjectRemoving), errors.Is(err, errLocalFilesDeleted):
 			// A project may be intentionally forgotten between reading the queue and its turn.
 			blocked[v.ID] = true
 			result.Skipped++
@@ -127,7 +150,7 @@ func (s *Store) SyncPending(ctx context.Context, policy AutoPolicy) (PendingSync
 			result.Uploaded++
 		}
 	}
-	if cyclic := result.Total - len(ready); cyclic > 0 {
+	if cyclic := len(items) - len(ready); cyclic > 0 {
 		result.Failed += cyclic
 		result.Errors = append(result.Errors, fmt.Sprintf("%d 个版本的父版本依赖存在循环", cyclic))
 	}

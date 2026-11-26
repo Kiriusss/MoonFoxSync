@@ -2,32 +2,11 @@ import AppKit
 import SwiftUI
 import Combine
 
-private final class TrayPosition: ObservableObject {
-    @Published var tip: CGFloat = 155
-}
-private struct TraySurface<Content: View>: View {
-    @ObservedObject var position: TrayPosition
-    let content: Content
-    var body: some View {
-        VStack(spacing: 0) {
-            Canvas { c, _ in
-                var p = Path()
-                p.move(to: CGPoint(x:position.tip-8,y:7))
-                p.addLine(to:CGPoint(x:position.tip,y:0))
-                p.addLine(to:CGPoint(x:position.tip+8,y:7))
-                c.fill(p,with:.color(DeskColor.surface))
-            }.frame(height:7)
-            content.background(DeskColor.surface, in: RoundedRectangle(cornerRadius:13))
-                .overlay(RoundedRectangle(cornerRadius:13).strokeBorder(DeskColor.line,lineWidth:0.7))
-        }.fixedSize()
-    }
-}
-
 // Coordinates are measured in AppKit screen points, including on scaled displays.
 @MainActor
 final class TrayAnchor {
     private let panel = NSPanel(contentRect: .zero,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:true)
-    private let position = TrayPosition()
+    private weak var hostedContent: NSView?
     private weak var button: NSStatusBarButton?
     private var observers = Set<AnyCancellable>()
     private var mouseMonitor: Any?
@@ -48,8 +27,32 @@ final class TrayAnchor {
         panel.identifier = NSUserInterfaceItemIdentifier("xinhu.tray")
     }
     func configure<V: View>(_ content: V, model: LibraryModel, schedule: Schedule) {
-        let host = NSHostingView(rootView: TraySurface(position:position,content:content))
-        panel.contentView = host
+        let host = NSHostingView(rootView: content.fixedSize())
+        host.autoresizingMask = [.width, .height]
+        hostedContent = host
+
+        let size = host.fittingSize
+        let bounds = NSRect(origin: .zero, size: size)
+        host.frame = bounds
+        panel.setContentSize(size)
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.style = .regular
+            glass.cornerRadius = 24
+            glass.contentView = host
+            panel.contentView = glass
+        } else {
+            let blur = NSVisualEffectView(frame: bounds)
+            blur.material = .popover
+            blur.blendingMode = .behindWindow
+            blur.state = .active
+            blur.wantsLayer = true
+            blur.layer?.cornerRadius = 24
+            blur.layer?.cornerCurve = .continuous
+            blur.layer?.masksToBounds = true
+            blur.addSubview(host)
+            panel.contentView = blur
+        }
         for publisher in [model.objectWillChange,schedule.objectWillChange] {
             publisher.sink { [weak self] _ in
                 DispatchQueue.main.async { self?.layout() }
@@ -84,7 +87,7 @@ final class TrayAnchor {
         if !panel.frame.contains(point) && !anchorRect.contains(point) {close()}
     }
     private func layout(opening: Bool = false) {
-        guard opening || isShown,let button,let window=button.window,let host=panel.contentView else{return}
+        guard opening || isShown,let button,let window=button.window,let host=hostedContent else{return}
         let measured=window.convertToScreen(button.convert(button.bounds,to:nil))
         let reference=clickedOn ?? NSPoint(x:measured.midX,y:measured.midY)
         guard let screen=NSScreen.screens.first(where:{$0.frame.contains(reference)}) ?? window.screen else{return}
@@ -100,10 +103,11 @@ final class TrayAnchor {
         let width=ceil(fit.width),height=ceil(fit.height)
         let x=min(max(anchorRect.midX-width/2,bounds.minX+5),bounds.maxX-width-5)
         let y=max(bounds.minY+4,anchorRect.minY-3-height)
-        let tip=min(max(anchorRect.midX-x,14),width-14)
-        if abs(position.tip-tip)>0.1 {position.tip=tip}
         let frame=NSRect(x:round(x),y:round(y),width:width,height:height)
-        if panel.frame != frame { panel.setFrame(frame,display:true) }
+        if panel.frame != frame {
+            panel.setFrame(frame, display: true)
+            panel.invalidateShadow()
+        }
     }
     func close() {
         panel.orderOut(nil)

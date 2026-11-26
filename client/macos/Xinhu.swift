@@ -13,6 +13,7 @@ struct ReadingRoom: View {
     @State var checkingGit: String?
     @State var gitSyncProject: DesktopProject?
     @State var deletionTarget: LibraryRemoval?
+    @State var localFilesTarget: LocalFilesTarget?
     @State var pairing = false
     @State var scheduleSettings = false
     @State var address = ""
@@ -81,6 +82,9 @@ struct ReadingRoom: View {
              if let path = project.path { GitSyncSheet(model: model, name: project.name, path: path) }
          }
          .sheet(item: $shell.workspaceRequest) { WorkspaceSpace(request:$0) }
+         .sheet(item: $localFilesTarget) { target in
+             LocalFileDeletionSheet(model: model, target: target)
+         }
          .sheet(item: $deletionTarget) { target in
              LibraryRemovalSheet(model: model, target: target)
          }
@@ -125,10 +129,7 @@ struct ReadingRoom: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 9) {
-                if let img = Bundle.main.image(forResource: "Avatar") {
-                    Image(nsImage: img).resizable().interpolation(.high).frame(width: 35,height: 35)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
+                TailMark().frame(width: 35, height: 35)
                 if !compactSidebar { Text("心狐同步").font(.system(size: 18, weight: .bold)) }
             }.padding(.leading, 7).padding(.top, 18).padding(.bottom, 24)
             ForEach([DesktopPage.overview, .projects, .libraries, .queue, .cache], id: \.self) { nav($0) }

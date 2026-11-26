@@ -305,6 +305,9 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 	if e != nil {
 		return v, e
 	}
+	if b.LocalFilesDeleted {
+		return v, errLocalFilesDeleted
+	}
 	if e = checkCredentialPath(b.Path); e != nil {
 		return v, e
 	}
