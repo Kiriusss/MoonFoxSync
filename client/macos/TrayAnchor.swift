@@ -37,7 +37,7 @@ final class TrayAnchor {
         panel.setContentSize(size)
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: bounds)
-            glass.style = .regular
+            glass.style = .clear
             glass.cornerRadius = 24
             glass.contentView = host
             panel.contentView = glass
