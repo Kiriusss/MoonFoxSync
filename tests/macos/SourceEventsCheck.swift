@@ -30,7 +30,7 @@ struct SourceEventsCheck {
         let roots = [LocalBinding(unitId: "p", path: project.path, profile: "project", localFilesDeleted: nil),
                      LocalBinding(unitId: "c", path: codex.path, profile: "codex", localFilesDeleted: nil),
                      LocalBinding(unitId: "f", path: single.path, profile: "file", localFilesDeleted: nil)]
-        watcher.configure(roots)
+        await watcher.configure(roots)
         defer { watcher.stop() }
         try await Task.sleep(for: .seconds(1))
         let baseline = ["p": "project-token", "c": "codex-token", "f": "file-token"]
@@ -53,7 +53,7 @@ struct SourceEventsCheck {
         try Data([4]).write(to: single)
         try await waitFor { watcher.begin(manual: false).clean.isEmpty }
         watcher.stop()
-        watcher.configure(roots)
+        await watcher.configure(roots)
         watcher.acknowledge(baseline, versions: start.versions)
         precondition(watcher.begin(manual: false).clean.isEmpty)
         print("Passed native filesystem change and scan acknowledgement checks")

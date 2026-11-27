@@ -18,7 +18,7 @@ final class Schedule: ObservableObject {
     private var timer: Timer?
     private let events = SourceEvents()
     private var bindings: [LocalBinding]?
-    private var preparing = false
+    private var preparation: UUID?
     private var generation = 0
     let defaults = UserDefaults.standard
 
@@ -48,7 +48,7 @@ final class Schedule: ObservableObject {
         timer?.invalidate()
         timer = nil
         generation += 1
-        preparing = false
+        preparation = nil
         bindings = nil
         events.stop()
         if let process, process.isRunning { process.interrupt() }
@@ -68,22 +68,33 @@ final class Schedule: ObservableObject {
     }
 
     private func check(manual: Bool = false) {
-        guard (active || manual), process == nil, !preparing else { return }
-        preparing = true
+        guard (active || manual), process == nil, preparation == nil else { return }
+        let ticket = UUID()
+        preparation = ticket
         let current = generation
+        // An offline mount or a pending system permission can stall observer
+        // setup. Keep the UI and regular scheduled checking available.
+        let fallback = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, preparation == ticket else { return }
+            preparation = nil
+            launch(manual: manual, generation: current, observed: false)
+        }
         Task {
+            defer { fallback.cancel() }
             if bindings == nil {
                 let list = try? await CLI.rows(["bindings"], LocalBinding.self)
                 guard current == generation else { return }
                 bindings = list
             }
-            preparing = false
-            events.configure(bindings ?? [])
-            launch(manual: manual, generation: current)
+            let observed = await events.configure(bindings ?? [])
+            guard preparation == ticket else { return }
+            preparation = nil
+            launch(manual: manual, generation: current, observed: observed)
         }
     }
 
-    private func launch(manual: Bool, generation current: Int) {
+    private func launch(manual: Bool, generation current: Int, observed: Bool) {
         guard let binary = Bundle.main.url(forResource: "kdrive-agent", withExtension: nil) else {
             error = "应用包缺少 kdrive-agent。"
             return
@@ -100,7 +111,7 @@ final class Schedule: ObservableObject {
         child.standardError = pipe
         let input = Pipe()
         child.standardInput = input
-        let pass = events.begin(manual: manual)
+        let pass = observed ? events.begin(manual: manual) : (versions: [:], clean: [:])
         let summary = Task.detached {
             let data = try? output.fileHandleForReading.readToEnd()
             return data.flatMap { try? JSONDecoder().decode(ScheduleReport.self, from: $0) }

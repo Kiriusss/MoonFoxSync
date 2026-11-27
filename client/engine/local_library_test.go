@@ -92,7 +92,7 @@ func TestLocalRemovalIsScopedAndResetClearsCredential(t *testing.T) {
 	lock.Close()
 	// The capture index outlives individual snapshots and is scoped to a binding.
 	for _, unit := range []string{f.unit, another.UnitID} {
-		if _, err := f.s.db.Exec("INSERT INTO capture_file_index VALUES(?, 'index-fixture', X'00', '')", unit); err != nil {
+		if _, err := f.s.db.Exec("INSERT INTO capture_file_index(unit,parent,path,signature,digest) VALUES(?, '.', 'index-fixture', X'00', '')", unit); err != nil {
 			t.Fatal(err)
 		}
 	}
