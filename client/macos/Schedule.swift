@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+private struct ScheduleReport: Decodable {
+    let bindings: [LocalBinding]?
+    let checked: [String: String]
+    let changed: Bool
+}
+
 @MainActor
 final class Schedule: ObservableObject {
     @Published private(set) var active = false
@@ -10,6 +16,10 @@ final class Schedule: ObservableObject {
     var didCheck: (() -> Void)?
     private var process: Process?
     private var timer: Timer?
+    private let events = SourceEvents()
+    private var bindings: [LocalBinding]?
+    private var preparing = false
+    private var generation = 0
     let defaults = UserDefaults.standard
 
     init() {
@@ -37,7 +47,11 @@ final class Schedule: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
-        if let process, process.isRunning { process.terminate() }
+        generation += 1
+        preparing = false
+        bindings = nil
+        events.stop()
+        if let process, process.isRunning { process.interrupt() }
     }
 
     func toggle() {
@@ -54,20 +68,43 @@ final class Schedule: ObservableObject {
     }
 
     private func check(manual: Bool = false) {
-        guard (active || manual), process == nil else { return }
+        guard (active || manual), process == nil, !preparing else { return }
+        preparing = true
+        let current = generation
+        Task {
+            if bindings == nil {
+                let list = try? await CLI.rows(["bindings"], LocalBinding.self)
+                guard current == generation else { return }
+                bindings = list
+            }
+            preparing = false
+            events.configure(bindings ?? [])
+            launch(manual: manual, generation: current)
+        }
+    }
+
+    private func launch(manual: Bool, generation current: Int) {
         guard let binary = Bundle.main.url(forResource: "kdrive-agent", withExtension: nil) else {
             error = "应用包缺少 kdrive-agent。"
             return
         }
         let child = Process()
-        var args = ["--once"] + homeRouteArguments
+        var args = ["--once", "--watch-pass"] + homeRouteArguments
         if defaults.bool(forKey: "awaySmall") { args += ["--away-small"] }
         child.executableURL = binary
         child.arguments = args
-        child.standardOutput = FileHandle.nullDevice
+        child.qualityOfService = manual ? .userInitiated : .utility
+        let output = Pipe()
+        child.standardOutput = output
         let pipe = Pipe()
         child.standardError = pipe
-        child.standardInput = FileHandle.nullDevice
+        let input = Pipe()
+        child.standardInput = input
+        let pass = events.begin(manual: manual)
+        let summary = Task.detached {
+            let data = try? output.fileHandleForReading.readToEnd()
+            return data.flatMap { try? JSONDecoder().decode(ScheduleReport.self, from: $0) }
+        }
         // Drain the pipe on a separate task so a large number of errors cannot block the child.
         let report = Task.detached {
             var tail = Data()
@@ -82,23 +119,40 @@ final class Schedule: ObservableObject {
         child.terminationHandler = { [weak self] p in
             Task { @MainActor in
                 let message = await report.value
+                let result = await summary.value
                 guard let self, self.process === p else { return }
                 self.process = nil
                 self.running = false
-                if p.terminationReason == .exit {
-                    self.lastChecked = Date()
-                    self.error = p.terminationStatus == 0 ? "" : (message.isEmpty ? "同步检查失败（\(p.terminationStatus)）" : message)
-                    self.didCheck?()
+                guard self.generation == current, p.terminationReason == .exit else { return }
+                if let result {
+                    self.events.acknowledge(result.checked, versions: pass.versions)
+                    self.bindings = result.bindings ?? []
+                    if result.changed { self.didCheck?() }
+                }
+                self.lastChecked = Date()
+                if p.terminationStatus == 0 {
+                    self.error = result == nil ? "未收到本轮检查结果，下次将重试。" : ""
+                } else {
+                    self.error = message.isEmpty ? "同步检查失败（\(p.terminationStatus)）" : message
                 }
             }
         }
         do {
+            let request = try JSONEncoder().encode(pass.clean)
             try child.run()
+            try? output.fileHandleForWriting.close()
             try? pipe.fileHandleForWriting.close()
+            try? input.fileHandleForReading.close()
+            Task.detached {
+                defer { try? input.fileHandleForWriting.close() }
+                try? input.fileHandleForWriting.write(contentsOf: request)
+            }
             error = ""
             process = child
             running = true
         } catch {
+            try? output.fileHandleForWriting.close()
+            try? input.fileHandleForWriting.close()
             try? pipe.fileHandleForWriting.close()
             self.error = error.localizedDescription
         }
@@ -123,7 +177,8 @@ struct ScheduleSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("自动同步").font(.title2.bold())
-            Toggle("应用运行期间每分钟检查绑定来源", isOn: $enabled)
+            Toggle("自动备份有变化的来源", isOn: $enabled)
+            Text("本机目录按文件变化检查，每天复查一次。").font(.caption)
             Group {
                 TextField("家庭 NAS 的 HTTPS 地址", text: $home)
                 TextField("家庭物理网卡，例如 en0", text: $interface)

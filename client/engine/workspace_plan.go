@@ -155,7 +155,7 @@ func (idx *workspaceIndex) content(key string) (workspaceDigest, error) {
 	return data, nil
 }
 func (s *Store) entryInSnapshot(root, member string) (objectfmt.Entry, error) {
-	index := workspaceIndex{load: s.load, dirs: map[string][]objectfmt.Entry{}}
+	index := workspaceIndex{load: s.readSpoolBytes, dirs: map[string][]objectfmt.Entry{}}
 	return index.entry(root, member)
 }
 
@@ -259,7 +259,7 @@ func (s *Store) workspacePlannerFor(ctx context.Context, source string, folder, 
 	if err != nil || real != root {
 		return nil, errors.New("绑定目录已移动或被符号链接替换")
 	}
-	p := &workspacePlanner{store: s, binding: b, root: root, markers: map[string]string{}, archives: map[string]WorkspaceFile{}, index: workspaceIndex{s.load, map[string][]objectfmt.Entry{}, map[string]workspaceDigest{}}}
+	p := &workspacePlanner{store: s, binding: b, root: root, markers: map[string]string{}, archives: map[string]WorkspaceFile{}, index: workspaceIndex{s.readSpoolBytes, map[string][]objectfmt.Entry{}, map[string]workspaceDigest{}}}
 	var marker string
 	if err = s.db.QueryRowContext(ctx, `SELECT r.identity,a.device FROM binding_roots r JOIN account a ON a.id=1 WHERE r.unit=?`, b.Unit).Scan(&marker, &p.device); err != nil {
 		return nil, err

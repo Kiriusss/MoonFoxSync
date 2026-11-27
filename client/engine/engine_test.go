@@ -59,6 +59,18 @@ func setup(t *testing.T) fixture {
 	}
 	return fixture{s, nas, unit, source}
 }
+func publishedWorkspaceCapture(t *testing.T, f fixture) Snapshot {
+	t.Helper()
+	v, err := f.s.Snapshot(t.Context(), f.unit, "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.Sync(t.Context(), f.unit, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
 func TestAutoSmallAndSafeCache(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()

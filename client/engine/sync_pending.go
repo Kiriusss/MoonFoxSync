@@ -46,7 +46,7 @@ func (s *Store) SyncPending(ctx context.Context, policy AutoPolicy) (PendingSync
 	defer activity.Close()
 	// A single SQLite statement fixes this run's membership. Captures can
 	// continue in parallel and will be picked up by a subsequent run.
-	items, err := s.readSnapshots(ctx, "SELECT "+snapCols+" FROM snapshots WHERE state='queued' ORDER BY captured,id")
+	items, err := s.PendingSnapshots(ctx)
 	if err != nil || len(items) == 0 {
 		return result, err
 	}
@@ -155,4 +155,8 @@ func (s *Store) SyncPending(ctx context.Context, policy AutoPolicy) (PendingSync
 		result.Errors = append(result.Errors, fmt.Sprintf("%d 个版本的父版本依赖存在循环", cyclic))
 	}
 	return result, nil
+}
+
+func (s *Store) PendingSnapshots(ctx context.Context) ([]Snapshot, error) {
+	return s.readSnapshots(ctx, "SELECT "+snapCols+" FROM snapshots WHERE state='queued' ORDER BY captured,id")
 }

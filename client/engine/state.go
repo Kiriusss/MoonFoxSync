@@ -111,6 +111,7 @@ func Open(home string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS binding_roots(unit TEXT PRIMARY KEY REFERENCES bindings(unit),identity TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, unit TEXT NOT NULL REFERENCES bindings(unit), parent TEXT, root TEXT NOT NULL, label TEXT NOT NULL, captured TEXT NOT NULL, request TEXT NOT NULL, state TEXT NOT NULL, receipt BLOB);
  CREATE INDEX IF NOT EXISTS queue_order ON snapshots(unit,captured,id);
+ CREATE TABLE IF NOT EXISTS capture_file_index(unit TEXT NOT NULL REFERENCES bindings(unit) ON DELETE CASCADE,parent TEXT NOT NULL,path TEXT NOT NULL,signature BLOB NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(unit,parent,path)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS snapshot_objects (snapshot TEXT NOT NULL REFERENCES snapshots(id),kind TEXT NOT NULL,digest TEXT NOT NULL,size INTEGER NOT NULL,PRIMARY KEY(snapshot,kind,digest));
  CREATE INDEX IF NOT EXISTS spool_references ON snapshot_objects(kind,digest,snapshot);`)
 	if err != nil {

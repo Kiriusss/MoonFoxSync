@@ -193,17 +193,37 @@ func (d *decoder) done() error {
 // BuildFile consumes src once. Store receives immutable bytes for each new
 // occurrence; it may deduplicate repeated references.
 func BuildFile(src io.Reader, store Store) (string, error) {
+	return buildFile(src, store, nil)
+}
+
+// FileBuilder reuses one chunk buffer across a sequential capture. Its store
+// must consume or copy chunk bytes before returning.
+type FileBuilder struct {
+	block []byte
+}
+
+func (b *FileBuilder) Build(src io.Reader, store Store) (string, error) {
+	if b.block == nil {
+		b.block = make([]byte, ChunkSize)
+	}
+	return buildFile(src, store, b.block)
+}
+
+func buildFile(src io.Reader, store Store, block []byte) (string, error) {
 	sum := sha256.New()
 	var size uint64
 	var chunks []string
 	for {
 		var b []byte
 		var err error
-		if len(chunks) == 0 {
+		if block == nil && len(chunks) == 0 {
 			// The common small-file path never allocates a full block.
 			b, err = io.ReadAll(io.LimitReader(src, ChunkSize))
 		} else {
-			b = make([]byte, ChunkSize)
+			b = block
+			if b == nil {
+				b = make([]byte, ChunkSize)
+			}
 			var n int
 			n, err = io.ReadFull(src, b)
 			if err == io.ErrUnexpectedEOF || err == io.EOF {
@@ -225,6 +245,14 @@ func BuildFile(src io.Reader, store Store) (string, error) {
 			return "", err
 		}
 		chunks = append(chunks, id)
+		if len(chunks) == 1 && len(b) < ChunkSize {
+			// A single chunk is also the complete file checksum.
+			checksum, err := hex.DecodeString(id)
+			if err != nil {
+				return "", err
+			}
+			return storeFileRoot(uint64(len(b)), checksum, chunks, store)
+		}
 		sum.Write(b)
 		size += uint64(len(b))
 		if len(b) < ChunkSize {

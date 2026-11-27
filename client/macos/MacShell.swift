@@ -99,10 +99,12 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
         }
         startTransferMonitor()
         scheduler.start()
-        model.refreshProjects()
-        model.refreshProjects(remoteGit:true)
         projectsTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats:true) { [weak self] _ in
-            Task { @MainActor in self?.model.refreshProjects(remoteGit:true) }
+            Task { @MainActor in
+                guard let self, self.panel.isShown || self.mainWindow?.occlusionState.contains(.visible) == true else { return }
+                try? await self.model.refreshJobs()
+                self.model.refreshProjects(remoteGit: true)
+            }
         }
         refreshLoginState()
         if !silent && inApplications && !UserDefaults.standard.bool(forKey: "loginConfigured") {
@@ -142,7 +144,7 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
                     if model.transferError != error.localizedDescription { model.transferError = error.localizedDescription }
                     animateFox(false)
                 }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(model.transfers.isEmpty ? 2000 : 500))
             }
         }
     }
@@ -210,7 +212,7 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
     func openLoginSettings() { SMAppService.openSystemSettingsLoginItems() }
 
     private func refreshModel() {
-        model.run { try await self.model.refresh() }
+        model.run { try await self.model.refresh(remoteGit: true) }
     }
 
     @objc private func togglePanel() {

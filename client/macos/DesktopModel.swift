@@ -78,10 +78,6 @@ struct LocalConnection: Decodable {
     var paired: Bool
     var serverUrl: String?
 }
-struct LocalBinding: Decodable {
-    let unitId, path, profile: String
-    let localFilesDeleted: Bool?
-}
 
 @MainActor
 final class LibraryModel: ObservableObject {
@@ -179,8 +175,8 @@ final class LibraryModel: ObservableObject {
         let result = try await CLI.rows(["queue"], Job.self)
         if read == queueRead { jobs = result }
     }
-    func refresh() async throws {
-        defer { refreshProjects() }
+    func refresh(remoteGit: Bool = false) async throws {
+        defer { refreshProjects(remoteGit: remoteGit) }
         try await refreshJobs()
         bindings = try await CLI.rows(["bindings"], LocalBinding.self)
         try await refreshCache()

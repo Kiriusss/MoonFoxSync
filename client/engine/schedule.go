@@ -90,30 +90,44 @@ func (s *Store) scanDue(ctx context.Context, b Binding, p AutoPolicy) (bool, err
 	return n == 1, e
 }
 func (s *Store) CaptureDue(ctx context.Context, b Binding, p AutoPolicy) (*Snapshot, error) {
+	v, _, err := s.CaptureScheduled(ctx, b, p)
+	return v, err
+}
+
+// CaptureScheduled reports a new snapshot only when this call creates one.
+// The separate completion flag lets event watchers acknowledge a clean scan
+// without losing pending changes when the source policy postpones the scan.
+func (s *Store) CaptureScheduled(ctx context.Context, b Binding, p AutoPolicy) (*Snapshot, bool, error) {
 	if b.LocalFilesDeleted {
-		return nil, nil
+		return nil, false, nil
 	}
 	if b.Profile == "codex" {
 		lock, e := s.presetLock()
 		if e != nil {
-			return nil, e
+			return nil, false, e
 		}
 		defer lock.Close()
 		status, e := s.CodexStatus(ctx)
 		if e != nil || !status.Enabled {
-			return nil, e
+			return nil, false, e
 		}
 	}
 	due, e := s.scanDue(ctx, b, p)
 	if e != nil || !due {
-		return nil, e
+		return nil, false, e
 	}
-	v, e := s.Snapshot(ctx, b.Unit, "")
+	v, e := s.captureSnapshot(ctx, b.Unit, "", true)
 	if errors.Is(e, errLocalFilesDeleted) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if b.Profile == "codex" {
 		s.recordPresetError(ctx, e)
 	}
-	return &v, e
+	if e != nil {
+		return nil, false, e
+	}
+	if v.ID == "" {
+		return nil, true, nil
+	}
+	return &v, true, nil
 }

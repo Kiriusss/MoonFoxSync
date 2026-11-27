@@ -21,7 +21,7 @@ struct GitReport: Decodable {
         case "cached": text = "Git 仅本地引用"
         default: text = "Git 状态待核实"
         }
-        return text + (dirty ? " · 有本地修改" : "")
+        return text + (dirty ? " · 工作区有未提交改动" : "")
     }
 }
 struct DesktopProject: Decodable, Identifiable {

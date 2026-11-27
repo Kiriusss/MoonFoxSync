@@ -46,18 +46,6 @@ func detachedWorkspaceFile(t *testing.T, f fixture, member string) WorkspaceFile
 	return a
 }
 
-func publishedWorkspaceCapture(t *testing.T, f fixture) Snapshot {
-	t.Helper()
-	v, err := f.s.Snapshot(t.Context(), f.unit, "version")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.s.Sync(t.Context(), f.unit, v.ID); err != nil {
-		t.Fatal(err)
-	}
-	return v
-}
-
 func TestWorkspaceCaptureStandaloneFileOffline(t *testing.T) {
 	f := setup(t)
 	ctx := t.Context()
@@ -242,5 +230,59 @@ func TestWorkspaceCaptureRefusesMissingMovedOrReplacedReference(t *testing.T) {
 				t.Fatal(count, err)
 			}
 		})
+	}
+}
+
+func TestScheduledOfflineArchiveOpensManifestOnlyForNewVersion(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	makeFile(t, f.source, "held.data", "published asset")
+	baseline := publishedWorkspaceCapture(t, f)
+	a := detachedWorkspaceFile(t, f, "held.data")
+	b, err := f.s.binding(ctx, f.unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan := func() (*Snapshot, error) {
+		t.Helper()
+		if _, err := f.s.db.Exec("UPDATE schedules SET last_scan=0 WHERE unit=?", b.Unit); err != nil {
+			t.Fatal(err)
+		}
+		v, complete, err := f.s.CaptureScheduled(ctx, b, AutoPolicy{})
+		if err == nil && !complete {
+			t.Fatal("expected a completed scan")
+		}
+		return v, err
+	}
+	manifest := f.s.objectPath(objectfmt.Ref{Kind: "file", Digest: a.Entry.Digest})
+	aside := filepath.Join(t.TempDir(), "saved-manifest")
+	if err := os.Rename(manifest, aside); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := scan(); err != nil || v != nil {
+		t.Fatalf("unchanged archive accessed its missing manifest: %v %v", v, err)
+	}
+	makeFile(t, f.source, "edit.txt", "fresh change")
+	if _, err := scan(); !os.IsNotExist(err) {
+		t.Fatalf("new version accepted missing archive metadata: %v", err)
+	}
+	if err := os.Rename(aside, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.db.Exec("UPDATE workspace_archives SET size=size+1 WHERE slot=?", a.Slot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scan(); err == nil {
+		t.Fatal("new version accepted inconsistent archive size")
+	}
+	if _, err := f.s.db.Exec("UPDATE workspace_archives SET size=? WHERE slot=?", a.Size, a.Slot); err != nil {
+		t.Fatal(err)
+	}
+	v, err := scan()
+	if err != nil || v == nil || v.Parent == nil || *v.Parent != baseline.ID {
+		t.Fatal("expected one complete new version", v, err)
+	}
+	if _, err := f.s.Sync(ctx, f.unit, v.ID); err != nil {
+		t.Fatal(err)
 	}
 }

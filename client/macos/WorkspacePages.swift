@@ -210,7 +210,7 @@ extension ReadingRoom {
             Text("同步策略").font(.system(size: 15,weight:.bold)).padding(.top,5)
             VStack(alignment: .leading,spacing:0) {
                 HStack {
-                    settingText("自动同步",scheduler.active ? "后台每分钟检查已绑定的来源。" : "已暂停，仍可手动保存和上传快照。")
+                    settingText("自动同步",scheduler.active ? "后台按文件变化检查，安静的本机目录每天复查一次。" : "已暂停，仍可手动保存和上传快照。")
                     Spacer()
                     SourceScheduleButton(model:model)
                     Button("配置策略…") { scheduleSettings = true }.buttonStyle(DeskAction())

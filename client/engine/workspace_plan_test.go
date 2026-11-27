@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -224,5 +225,24 @@ func TestWorkspaceIndexDecodesWideDirectoryOnce(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("%v loaded %d times", r, count)
 		}
+	}
+}
+
+func TestWorkspaceIndexRejectsModifiedTree(t *testing.T) {
+	f := setup(t)
+	makeFile(t, f.source, "document", "saved")
+	v := publishedWorkspaceCapture(t, f)
+	path := f.s.objectPath(objectfmt.Ref{Kind: "tree", Digest: v.Root})
+	page, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A modified file digest still forms a valid directory page at the same size.
+	page[len(page)-1] ^= 1
+	if err := os.WriteFile(path, page, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.entryInSnapshot(v.Root, "document"); !errors.Is(err, objectfmt.ErrObjectIntegrity) {
+		t.Fatalf("corrupt project metadata passed verification: %v", err)
 	}
 }

@@ -6,8 +6,8 @@
 <key>CFBundleIdentifier</key><string>local.kirius.xinhu.badges</string>
 <key>CFBundleExecutable</key><string>MoonFoxFinderBadges</string>
 <key>CFBundlePackageType</key><string>XPC!</string>
-<key>CFBundleVersion</key><string>14</string>
-<key>CFBundleShortVersionString</key><string>0.4.10</string>
+<key>CFBundleVersion</key><string>15</string>
+<key>CFBundleShortVersionString</key><string>0.4.11</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>MoonFoxAppGroup</key><string>group.local.kirius.xinhu</string>
 <key>NSExtension</key><dict>

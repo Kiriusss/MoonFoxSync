@@ -92,7 +92,7 @@ func (s *Store) uploadTracker(ctx context.Context, t *transfer, snapshot Snapsho
 				return nil, err
 			}
 		}
-		entries, err := objectfmt.ReadDir(digest, s.load)
+		entries, err := objectfmt.ReadDir(digest, s.readSpoolBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func (s *Store) uploadTracker(ctx context.Context, t *transfer, snapshot Snapsho
 			case "file":
 				f := files[e.Digest]
 				if f == nil {
-					info, err := objectfmt.ReadFile(e.Digest, s.load)
+					info, err := objectfmt.ReadFile(e.Digest, s.readSpoolBytes)
 					if err != nil {
 						return nil, err
 					}

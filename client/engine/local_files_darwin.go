@@ -226,7 +226,8 @@ func (d *localDeletion) loadMetadata(ref objectfmt.Ref) ([]byte, error) {
 	if ref.Kind != "tree" && ref.Kind != "file" {
 		return nil, errors.New("只支持读取快照清单")
 	}
-	data, err := d.s.load(ref)
+	// The workspace index decodes this page with objectfmt, including digest verification.
+	data, err := d.s.readSpoolBytes(ref)
 	if !errors.Is(err, os.ErrNotExist) {
 		return data, err
 	}

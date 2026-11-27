@@ -172,3 +172,26 @@ func TestRejectInvalidManifest(t *testing.T) {
 		t.Fatal("file length limit", err)
 	}
 }
+
+func TestFileBuilderMatchesImmutableBlocks(t *testing.T) {
+	var builder FileBuilder
+	content := bytes.Repeat([]byte("a"), ChunkSize+7)
+	copy(content[ChunkSize:], "newtail")
+	for _, size := range []int{0, 23, ChunkSize, len(content), 1} {
+		src := content[:size]
+		store := memoryStore{}
+		id, err := builder.Build(bytes.NewReader(src), func(ref Ref, data []byte) error {
+			return store.put(ref, bytes.Clone(data))
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := BuildFile(bytes.NewReader(src), (memoryStore{}).put)
+		if err != nil || id != want {
+			t.Fatalf("size %d: %s != %s (%v)", size, id, want, err)
+		}
+		if err := VerifyFile(id, store.get); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

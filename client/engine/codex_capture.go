@@ -112,7 +112,7 @@ func (s *codexScan) reuse(digest string) (bool, error) {
 	}
 	c := s.c
 	file, e := objectfmt.ReadFile(digest, func(ref objectfmt.Ref) ([]byte, error) {
-		b, e := c.store.load(ref)
+		b, e := c.store.readSpoolBytes(ref)
 		if e == nil {
 			c.refs[ref] = len(b)
 		}
@@ -186,11 +186,11 @@ func (s *codexScan) file(parent *os.Root, rel, name string, initial os.FileInfo)
 		}
 		stored = ""
 		if end > 0 {
-			stored, e = objectfmt.BuildFile(contextReader{s.c.ctx, io.NewSectionReader(f, 0, end)}, s.c.put)
+			stored, e = s.c.files.Build(contextReader{s.c.ctx, io.NewSectionReader(f, 0, end)}, s.c.put)
 			if e != nil {
 				return none, false, e
 			}
-			metadata, e := objectfmt.ReadFile(stored, s.c.store.load)
+			metadata, e := objectfmt.ReadFile(stored, s.c.store.readSpoolBytes)
 			if e != nil {
 				return none, false, e
 			}
@@ -212,7 +212,7 @@ func (s *codexScan) file(parent *os.Root, rel, name string, initial os.FileInfo)
 			// Recheck the fixed prefix when append or a Windows writer was observed.
 			// This never waits for the writer to release its handle.
 			if end > 0 {
-				metadata, e := objectfmt.ReadFile(stored, s.c.store.load)
+				metadata, e := objectfmt.ReadFile(stored, s.c.store.readSpoolBytes)
 				if e != nil {
 					return none, false, e
 				}

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 
 	"path/filepath"
 
-	"sort"
+	"runtime"
 	"strings"
 	"time"
 
@@ -37,15 +38,20 @@ type statCheck struct {
 	info fs.FileInfo
 }
 type capture struct {
-	archives map[string]WorkspaceFile
-	timeless bool
-	ctx      context.Context
-	store    *Store
-	root     *os.Root
-	refs     map[objectfmt.Ref]int
-	checks   []statCheck
-	included map[string]bool
-	excluded map[string]bool
+	files            objectfmt.FileBuilder
+	index            *captureFileIndex
+	installed        []objectfmt.Ref // Newly installed spool objects on a scheduled comparison.
+	archives         map[string]WorkspaceFile
+	deferredArchives map[string]workspaceDigest
+	timeless         bool
+	ctx              context.Context
+	store            *Store
+	root             *os.Root
+	refs             map[objectfmt.Ref]int
+	directoryChecks  []directoryCheck
+	checks           []statCheck
+	included         map[string]bool
+	excluded         map[string]bool
 }
 
 func (s *Store) objectPath(r objectfmt.Ref) string {
@@ -93,6 +99,9 @@ func (c *capture) put(r objectfmt.Ref, data []byte) error {
 		if e = os.Link(f.Name(), p); e != nil && !errors.Is(e, fs.ErrExist) {
 			return e
 		}
+		if e == nil && c.installed != nil {
+			c.installed = append(c.installed, r)
+		}
 		if e = syncDirectory(dir); e != nil {
 			return e
 		}
@@ -100,8 +109,15 @@ func (c *capture) put(r objectfmt.Ref, data []byte) error {
 	c.refs[r] = len(data)
 	return nil
 }
+
+// readSpoolBytes is the loader for objectfmt decoders, which verify each page.
+// Callers consuming bytes directly (such as uploads) must use load instead.
+func (s *Store) readSpoolBytes(r objectfmt.Ref) ([]byte, error) {
+	return os.ReadFile(s.objectPath(r))
+}
+
 func (s *Store) load(r objectfmt.Ref) ([]byte, error) {
-	b, e := os.ReadFile(s.objectPath(r))
+	b, e := s.readSpoolBytes(r)
 	if e != nil {
 		return nil, e
 	}
@@ -177,19 +193,37 @@ func (c *capture) projectMembers(dir string, policy IgnoredPolicy) (bool, error)
 	return true, nil
 }
 func sameFile(a, b fs.FileInfo) bool {
-	return os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
+	return os.SameFile(a, b) && a.Mode() == b.Mode() && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime()) && fileChangeTime(a) == fileChangeTime(b)
 }
 func (c *capture) entry(p string) (objectfmt.Entry, error) {
+	info, err := c.root.Lstat(p)
+	if err != nil {
+		return objectfmt.Entry{}, err
+	}
+	if info.IsDir() {
+		return c.entryAt(c.root, p, p, info, nil)
+	}
+	parent := filepath.Dir(p)
+	cache, err := c.index.directory(c.ctx, c.store, parent)
+	if err != nil {
+		return objectfmt.Entry{}, err
+	}
+	c.checks = append(c.checks, statCheck{p, info})
+	entry, err := c.entryAt(c.root, p, p, info, cache)
+	if err == nil {
+		err = c.index.finishDirectory(c.ctx, c.store, parent, cache)
+	}
+	return entry, err
+}
+
+func (c *capture) entryAt(parent *os.Root, name, p string, info fs.FileInfo, cache map[string]indexedFile) (objectfmt.Entry, error) {
 	var result objectfmt.Entry
 	if e := c.ctx.Err(); e != nil {
 		return result, e
 	}
-	info, e := c.root.Lstat(p)
-	if e != nil {
-		return result, e
-	}
+	var e error
 	archive, managed := c.archives[filepath.ToSlash(p)]
-	if !managed { // prepareArchives already recorded every registered link, including excluded files.
+	if !managed && runtime.GOOS == "windows" { // prepareArchives already recorded every registered link, including excluded files.
 		c.checks = append(c.checks, statCheck{p, info})
 	}
 	result.Name = filepath.Base(p)
@@ -202,7 +236,7 @@ func (c *capture) entry(p string) (objectfmt.Entry, error) {
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
 		result.Kind = "symlink"
-		result.Target, e = c.root.Readlink(p)
+		result.Target, e = parent.Readlink(name)
 		if e != nil {
 			return result, e
 		}
@@ -225,61 +259,41 @@ func (c *capture) entry(p string) (objectfmt.Entry, error) {
 	case info.Mode().IsRegular():
 		result.Kind = "file"
 		result.Executable = info.Mode().Perm()&0111 != 0
-		f, err := c.root.Open(p)
-		if err != nil {
-			return result, err
+		if cached, ok := c.index.lookup(p, info, cache); ok {
+			result.Digest = cached
+			break
 		}
-		defer f.Close()
-		opened, err := f.Stat()
-		if err != nil {
-			return result, err
+		result.Digest, e = c.hashFile(parent, name, p, info)
+		if e == nil {
+			e = c.index.record(c.ctx, c.store, p, info, result.Digest, cache)
 		}
-		if !sameFile(opened, info) {
-			return result, fmt.Errorf("采集期间文件已变化: %s", p)
-		}
-		result.Digest, e = objectfmt.BuildFile(f, c.put)
 	case info.IsDir():
 		result.Kind = "directory"
-		f, err := c.root.Open(p)
+		dir, err := parent.OpenRoot(name)
 		if err != nil {
 			return result, err
 		}
-		opened, err := f.Stat()
-		if err != nil || !sameFile(info, opened) {
-			f.Close()
-			return result, fmt.Errorf("采集期间目录已变化：%s", p)
-		}
-		names, err := f.Readdirnames(-1)
-		f.Close()
+		defer dir.Close()
+		fileIndex, err := c.index.directory(c.ctx, c.store, p)
 		if err != nil {
 			return result, err
 		}
-		sort.Strings(names)
-		children := make([]objectfmt.Entry, 0, len(names))
-		for _, name := range names {
-			if strings.EqualFold(name, ".git") {
-				continue
+		var children []objectfmt.Entry
+		sum, err := c.walkChildren(p, dir, info, func(name, child string, childInfo fs.FileInfo) error {
+			next, err := c.entryAt(dir, name, child, childInfo, fileIndex)
+			if err == nil {
+				children = append(children, next)
 			}
-			child := filepath.Join(p, name)
-			if c.excluded[child] || (c.included != nil && !c.included[child]) {
-				continue
-			}
-			childInfo, err := c.root.Lstat(child)
-			if err != nil {
-				return result, err
-			}
-			if childInfo.IsDir() {
-				if _, err := c.root.Lstat(filepath.Join(child, ".git")); err == nil {
-					continue
-				} else if !os.IsNotExist(err) {
-					return result, err
-				}
-			}
-			next, err := c.entry(child)
-			if err != nil {
-				return result, err
-			}
-			children = append(children, next)
+			return err
+		})
+		if err != nil {
+			return result, err
+		}
+		if runtime.GOOS != "windows" {
+			c.directoryChecks = append(c.directoryChecks, directoryCheck{p, sum})
+		}
+		if err = c.index.finishDirectory(c.ctx, c.store, p, fileIndex); err != nil {
+			return result, err
 		}
 		result.Digest, e = objectfmt.BuildDir(children, c.put)
 	default:
@@ -288,6 +302,10 @@ func (c *capture) entry(p string) (objectfmt.Entry, error) {
 	return result, e
 }
 func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, error) {
+	return s.captureSnapshot(ctx, unit, label, false)
+}
+
+func (s *Store) captureSnapshot(ctx context.Context, unit, label string, scheduled bool) (Snapshot, error) {
 	activity, lockErr := s.projectActivity(unit)
 	if lockErr != nil {
 		return Snapshot{}, lockErr
@@ -346,6 +364,10 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 		return v, errors.New("来源目录已更换或卸载，请恢复原目录")
 	}
 	c := capture{ctx: ctx, store: s, root: r, refs: map[objectfmt.Ref]int{}}
+	if scheduled && b.Base != nil {
+		c.installed = []objectfmt.Ref{}
+		c.deferredArchives = make(map[string]workspaceDigest)
+	}
 	if e = c.prepareArchives(b); e != nil {
 		return v, e
 	}
@@ -378,7 +400,10 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 	if b.Profile == "codex" {
 		item, e = c.codexTree()
 	} else {
-		item, e = c.entry(name)
+		c.index, e = s.loadCaptureIndex(ctx, b, r)
+		if e == nil {
+			item, e = c.entry(name)
+		}
 	}
 	if e != nil {
 		return v, e
@@ -396,11 +421,8 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 			return v, e
 		}
 	}
-	for _, check := range c.checks {
-		st, err := r.Lstat(check.path)
-		if err != nil || !sameFile(st, check.info) {
-			return v, fmt.Errorf("采集期间目录或文件已变动，请重试: %s", check.path)
-		}
+	if e = c.verifyChecks(); e != nil {
+		return v, e
 	}
 	if b.Profile == "codex" {
 		st, err := os.Lstat(dir)
@@ -411,20 +433,33 @@ func (s *Store) Snapshot(ctx context.Context, unit, label string) (Snapshot, err
 	if current, err := directoryMarkerAt(dir); err != nil || current != expectedMarker {
 		return v, errors.New("采集期间来源目录已更换或卸载")
 	}
+	if e = c.index.save(ctx, s, true); e != nil {
+		return v, e
+	}
 	if label == "" && b.Base != nil {
 		old, err := s.snap(ctx, *b.Base)
 		if err == nil {
-			if old.Root == rootDigest {
+			same, err := s.unchangedCapture(ctx, b, old, rootDigest, scheduled)
+			if err != nil {
+				return v, err
+			}
+			if same {
+				if scheduled {
+					return Snapshot{}, c.discardUnreferenced()
+				}
 				return old, nil
 			}
-			var restored bool
-			if e = s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM checkout_base WHERE unit=? AND snapshot=? AND local_root=?)", unit, old.ID, rootDigest).Scan(&restored); e != nil {
-				return v, e
-			}
-			if restored {
-				return old, nil
-			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return v, err
 		}
+	}
+	for digest, expected := range c.deferredArchives {
+		if e = c.collectArchiveRefs(digest, expected); e != nil {
+			return v, e
+		}
+	}
+	if e = c.collectReused(); e != nil {
+		return v, e
 	}
 	v = Snapshot{newID(), unit, b.Base, rootDigest, label, time.Now().UTC().Format(time.RFC3339Nano), "queued"}
 	tx, e := s.db.BeginTx(ctx, nil)

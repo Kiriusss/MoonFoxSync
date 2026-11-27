@@ -41,11 +41,8 @@ func (s *Store) baselineFingerprint(ctx context.Context, b Binding, policy Ignor
 	if err := c.checkArchiveCoverage(); err != nil {
 		return "", err
 	}
-	for _, check := range c.checks {
-		stat, err := root.Lstat(check.path)
-		if err != nil || !sameFile(stat, check.info) {
-			return "", errors.New("基线核对期间目录有变化，请重试绑定")
-		}
+	if err := c.verifyChecks(); err != nil {
+		return "", errors.New("基线核对期间目录有变化，请重试绑定")
 	}
 	if b.Profile == "file" {
 		return objectfmt.BuildDir([]objectfmt.Entry{entry}, c.put)

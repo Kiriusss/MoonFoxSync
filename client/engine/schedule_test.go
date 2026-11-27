@@ -35,13 +35,14 @@ func TestIndependentSourceSchedules(t *testing.T) {
 	if _, err = f.s.SetSchedule(ctx, b.Unit, "network", 120); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := f.s.CaptureDue(ctx, b, network)
-	if err != nil || snap == nil {
-		t.Fatal("first capture", err)
+	// Explicit snapshots above already represent this empty directory.
+	snap, completed, err := f.s.CaptureScheduled(ctx, b, network)
+	if err != nil || !completed || snap != nil {
+		t.Fatal("unchanged scan", snap, completed, err)
 	}
-	snap, err = f.s.CaptureDue(ctx, b, network)
-	if err != nil || snap != nil {
-		t.Fatal("interval", snap, err)
+	snap, completed, err = f.s.CaptureScheduled(ctx, b, network)
+	if err != nil || completed || snap != nil {
+		t.Fatal("interval", snap, completed, err)
 	}
 	if _, err = f.s.SetSchedule(ctx, b.Unit, "network", 0); err == nil {
 		t.Fatal("invalid interval accepted")

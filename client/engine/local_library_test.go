@@ -90,9 +90,25 @@ func TestLocalRemovalIsScopedAndResetClearsCredential(t *testing.T) {
 		t.Fatal("raced active snapshot")
 	}
 	lock.Close()
+	// The capture index outlives individual snapshots and is scoped to a binding.
+	for _, unit := range []string{f.unit, another.UnitID} {
+		if _, err := f.s.db.Exec("INSERT INTO capture_file_index VALUES(?, 'index-fixture', X'00', '')", unit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkIndexed := func(unit string, want int) {
+		t.Helper()
+		var n int
+		err := f.s.db.QueryRow("SELECT count(*) FROM capture_file_index WHERE unit=? AND path='index-fixture'", unit).Scan(&n)
+		if err != nil || n != want {
+			t.Fatalf("index count=%d, want %d: %v", n, want, err)
+		}
+	}
 	if _, err = f.s.RemoveLocal(ctx, f.unit, plan.Token); err != nil {
 		t.Fatal(err)
 	}
+	checkIndexed(f.unit, 0)
+	checkIndexed(another.UnitID, 1)
 	for _, file := range []string{cached.Local, f.s.objectPath(objectfmt.Ref{Kind: "chunk", Digest: objectfmt.Digest([]byte("only first project"))})} {
 		if _, err = os.Stat(file); !os.IsNotExist(err) {
 			t.Fatal(file, err)
@@ -124,6 +140,7 @@ func TestLocalRemovalIsScopedAndResetClearsCredential(t *testing.T) {
 	if _, err = f.s.RemoveLocal(ctx, "", reset.Token); err != nil {
 		t.Fatal(err)
 	}
+	checkIndexed(another.UnitID, 0)
 	if _, err = keyring.Get("xinhu-sync", device); !errors.Is(err, keyring.ErrNotFound) {
 		t.Fatal(err)
 	}

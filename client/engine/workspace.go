@@ -164,18 +164,35 @@ func (c *capture) archivedEntry(a WorkspaceFile) (objectfmt.Entry, error) {
 		entry.MtimeNS = 0
 		return entry, nil
 	}
-	info, e := objectfmt.ReadFile(a.Entry.Digest, func(ref objectfmt.Ref) ([]byte, error) {
-		b, err := c.store.load(ref)
+	expected := workspaceDigest{sha: a.SHA, size: a.Size}
+	if c.deferredArchives != nil {
+		// Link identity and location have already been checked. A scheduled
+		// comparison only needs its pinned entry to build the candidate tree.
+		if prior, ok := c.deferredArchives[a.Entry.Digest]; ok && prior != expected {
+			return objectfmt.Entry{}, errors.New("按需文件的内容描述不一致")
+		}
+		c.deferredArchives[a.Entry.Digest] = expected
+		return a.Entry, nil
+	}
+	return a.Entry, c.collectArchiveRefs(a.Entry.Digest, expected)
+}
+
+func (c *capture) collectArchiveRefs(digest string, expected workspaceDigest) error {
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	info, e := objectfmt.ReadFile(digest, func(ref objectfmt.Ref) ([]byte, error) {
+		b, err := c.store.readSpoolBytes(ref)
 		if err == nil {
 			c.refs[ref] = len(b)
 		}
 		return b, err
 	})
 	if e != nil {
-		return objectfmt.Entry{}, e
+		return e
 	}
-	if info.SHA256 != a.SHA || info.Size != a.Size {
-		return objectfmt.Entry{}, errors.New("按需文件的内容描述已变化")
+	if info.SHA256 != expected.sha || info.Size != expected.size {
+		return errors.New("按需文件的内容描述已变化")
 	}
 	remaining := info.Size
 	for _, ref := range info.Chunks {
@@ -183,7 +200,7 @@ func (c *capture) archivedEntry(a WorkspaceFile) (objectfmt.Entry, error) {
 		c.refs[ref] = int(sz)
 		remaining -= sz
 	}
-	return a.Entry, nil
+	return nil
 }
 func (s *Store) sourceRecord(ctx context.Context, source string) (WorkspaceFile, error) {
 	name, err := canonicalWorkspacePath(source)
