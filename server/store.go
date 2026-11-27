@@ -180,6 +180,10 @@ func syncDir(path string) error {
 	return f.Sync()
 }
 func Open(dir string) (*Store, error) {
+	return openStore(dir, true)
+}
+
+func openStore(dir string, maintain bool) (*Store, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, errors.New("dataDir must be absolute")
 	}
@@ -228,7 +232,9 @@ func Open(dir string) (*Store, error) {
 		}
 	}
 	s := &Store{batchDiskSlots: make(chan struct{}, 4), db: db, dir: dir, marker: id, externalSlots: make(chan struct{}, 2), archiveSlots: make(chan struct{}, 2)}
-	s.startRetention()
+	if maintain {
+		s.startRetention()
+	}
 	return s, nil
 }
 func (s *Store) Close() error {

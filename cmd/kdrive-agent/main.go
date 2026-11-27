@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 
 	"os"
 	"os/signal"
@@ -36,7 +37,12 @@ func main() {
 	homeIF := flag.String("home-interface", "", "登记的家庭物理网卡，例如 en0")
 	small := flag.Bool("away-small", false, "外出自动上传小任务，10 MiB/批，100 MiB/24h")
 	watch := flag.Bool("watch-pass", false, "一次检查，从标准输入读取持续监听且未变动的来源，输出本轮检查结果")
+	cancelOnClose := flag.Bool("cancel-on-stdin-close", false, "父进程关闭标准输入时终止当前采集")
 	flag.Parse()
+	if *watch && *cancelOnClose {
+		fmt.Fprintln(os.Stderr, "--watch-pass and --cancel-on-stdin-close both require stdin")
+		os.Exit(2)
+	}
 	var clean map[string]string
 	if *watch {
 		if !*once {
@@ -58,6 +64,12 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+	if *cancelOnClose {
+		go func() {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			cancel()
+		}()
+	}
 	s, e := engine.Open("")
 	if e != nil {
 		fmt.Fprintln(os.Stderr, e)
@@ -66,6 +78,9 @@ func main() {
 	defer s.Close()
 	for {
 		rows, e := s.Bindings(ctx)
+		if ctx.Err() != nil {
+			return
+		}
 		if e != nil {
 			fmt.Fprintln(os.Stderr, e)
 			os.Exit(1)
@@ -90,6 +105,9 @@ func main() {
 				}
 			}
 			v, scanned, e := s.CaptureScheduled(ctx, b, policy)
+			if ctx.Err() != nil {
+				return
+			}
 			if e != nil {
 				fmt.Fprintln(os.Stderr, e)
 				failed = true
@@ -117,6 +135,9 @@ func main() {
 					return
 				}
 				ack, err := s.AutoSync(ctx, job, policy)
+				if ctx.Err() != nil {
+					return
+				}
 				if errors.Is(err, engine.ErrWaiting) {
 					continue
 				}
@@ -130,6 +151,9 @@ func main() {
 					json.NewEncoder(os.Stdout).Encode(ack)
 				}
 			}
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		if *once {
 			if *watch {

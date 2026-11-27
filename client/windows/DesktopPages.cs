@@ -20,8 +20,9 @@ internal sealed partial class MainWindow
                    startupMessage = Style.Text("", 9, false, Style.Muted);
     Dashboard dashboard;
     readonly FlowLayoutPanel writeTools = Bar();
-    readonly CheckBox login = Check("登录 Windows 时启动"), automatic = Check("每分钟检查绑定来源"),
+    readonly CheckBox login = Check("登录 Windows 时启动"), automatic = Check("启用自动同步"),
                       away = Check("外出时自动上传小任务");
+    readonly ComboBox batteryPolicy = Picker(195);
     readonly TextBox homeUrl = new TextBox(), adapter = new TextBox();
     Button savePolicy, mergeFork, libraryTimeline, syncPending, syncSelected, syncErrors;
     bool settingFields;
@@ -232,7 +233,7 @@ internal sealed partial class MainWindow
         dashboard.SetStatus(connection, serverAddress, paired, libraryCountKnown,
                             libraryCountKnown ? libraries.Count.ToString() : "—",
                             queued < 0 ? "—" : queued.ToString(),
-                            shell.Busy ? "检查中" : shell.AutoSyncEnabled ? "已开启" : "已暂停");
+                            shell.Busy ? "检查中" : shell.AutomaticStatus);
         dashboard.SetProjects(shell.Projects, shell.ProjectError, paired);
         if (lastConnection != connection || queued != lastQueued)
         {
@@ -433,12 +434,17 @@ internal sealed partial class MainWindow
         var policy = Column();
         Row(policy, Occupy(Style.Text("同步策略", 12, true, Style.Ink)), 32);
         Row(policy, automatic, 30);
-        var fieldBox = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2,
+        var fieldBox = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3,
                                               Margin = Padding.Empty };
         fieldBox.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
         fieldBox.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fieldBox.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
         fieldBox.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        fieldBox.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        batteryPolicy.Items.AddRange(new object[] { "仅手动同步", "每小时检查一次", "每四小时检查一次" });
+        batteryPolicy.AccessibleName = "电池供电时";
+        fieldBox.Controls.Add(Occupy(Style.Text("电池供电时", 9, false, Style.Muted)), 0, 2);
+        fieldBox.Controls.Add(batteryPolicy, 1, 2);
         fieldBox.Controls.Add(Occupy(Style.Text("家庭 HTTPS 地址", 9, false, Style.Muted)), 0, 0);
         fieldBox.Controls.Add(Occupy(Style.Text("物理网卡名称", 9, false, Style.Muted)), 0, 1);
         homeUrl.AccessibleName = "家庭 HTTPS 地址";
@@ -446,13 +452,14 @@ internal sealed partial class MainWindow
         homeUrl.Anchor = adapter.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         fieldBox.Controls.Add(homeUrl, 1, 0);
         fieldBox.Controls.Add(adapter, 1, 1);
-        Row(policy, fieldBox, 75);
+        Row(policy, fieldBox, 110);
         Row(policy, away, 28);
         Row(policy,
             Occupy(Style.Text("每个任务最多 10 MiB，滚动 24 小时最多 100 MiB。", 9, false, Style.Muted)), 24);
         var buttons = Bar();
         savePolicy = Action("保存策略", delegate {
-            shell.Configure(automatic.Checked, homeUrl.Text.Trim(), adapter.Text.Trim(), away.Checked);
+            int minutes = batteryPolicy.SelectedIndex == 1 ? 60 : batteryPolicy.SelectedIndex == 2 ? 240 : 0;
+            shell.Configure(automatic.Checked, homeUrl.Text.Trim(), adapter.Text.Trim(), away.Checked, minutes);
             ReadSettings(true);
             status.Text = "同步策略已保存";
             return Task.FromResult(0);
@@ -463,7 +470,7 @@ internal sealed partial class MainWindow
         Row(policy, buttons, 0);
         Row(policy, Occupy(scanStatus), 34);
         policyCard.Controls.Add(policy);
-        Row(settings, policyCard, 287);
+        Row(settings, policyCard, 322);
         Row(settings, TransferSettingsCard(), 150);
         Row(settings, CodexCard(), 339);
         var storage = Bar();
@@ -487,6 +494,7 @@ internal sealed partial class MainWindow
             if (includePolicy)
             {
                 away.Checked = shell.AwaySmall;
+                batteryPolicy.SelectedIndex = shell.BatteryMinutes == 60 ? 1 : shell.BatteryMinutes == 240 ? 2 : 0;
                 homeUrl.Text = shell.HomeUrl;
                 adapter.Text = shell.HomeInterface;
             }

@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import IOKit.ps
+import notify
 
 private struct ScheduleReport: Decodable {
     let bindings: [LocalBinding]?
@@ -20,38 +22,160 @@ final class Schedule: ObservableObject {
     private var bindings: [LocalBinding]?
     private var preparation: UUID?
     private var generation = 0
-    let defaults = UserDefaults.standard
+    @Published private(set) var power: SyncPower
+    @Published private(set) var batteryPolicy: BatterySyncPolicy
+    let defaults: UserDefaults
+    private let readPower: () -> SyncPower
+    private let clock: () -> Date
+    private let agent: URL?
+    private var started = false
+    private var powerToken: Int32?
+    private var wakeObserver: NSObjectProtocol?
+    private var workIsManual = false
+    private var retryWhenIdle = false
 
-    init() {
+    init(defaults: UserDefaults = .standard, readPower: @escaping () -> SyncPower = SyncPower.current,
+         clock: @escaping () -> Date = Date.init,
+         agent: URL? = Bundle.main.url(forResource: "kdrive-agent", withExtension: nil)) {
+        self.defaults = defaults
+        self.readPower = readPower
+        self.clock = clock
+        self.agent = agent
+        power = readPower()
+        batteryPolicy = BatterySyncPolicy(rawValue: defaults.string(forKey: "batterySyncPolicy") ?? "") ?? .manual
         active = defaults.bool(forKey: "scheduleEnabled")
     }
 
-    func apply(enabled: Bool, url: String, interface: String, small: Bool) {
-        stop()
+    var status: String {
+        guard active else { return "自动同步已暂停" }
+        switch power {
+        case .external: return "自动同步已开启"
+        case .battery: return "电池 · " + batteryPolicy.label
+        case .unknown: return "电源状态未知 · 仅手动同步"
+        }
+    }
+
+    func apply(enabled: Bool, url: String, interface: String, small: Bool, battery: BatterySyncPolicy? = nil) {
+        let selected = battery ?? batteryPolicy
+        let batteryChanged = selected != batteryPolicy
+        let resetBatteryDelay = batteryChanged || enabled != active
+        let routeChanged = url != (defaults.string(forKey: "homeURL") ?? "")
+            || interface != (defaults.string(forKey: "homeInterface") ?? "")
+            || small != defaults.bool(forKey: "awaySmall")
+        guard resetBatteryDelay || routeChanged else {
+            if !started { start() }
+            return
+        }
+        let replan = routeChanged || enabled != active || (batteryChanged && power != .external)
+        if replan { cancelAutomatic() }
         defaults.set(enabled, forKey: "scheduleEnabled")
         defaults.set(url, forKey: "homeURL")
         defaults.set(interface, forKey: "homeInterface")
         defaults.set(small, forKey: "awaySmall")
+        defaults.set(selected.rawValue, forKey: "batterySyncPolicy")
         active = enabled
-        start()
+        batteryPolicy = selected
+        if resetBatteryDelay { setBatteryDeadline() }
+        if !enabled {
+            events.stop()
+            bindings = nil
+        }
+        if !started { start() } else if replan { evaluate(retryIfBusy: true) }
     }
 
-    func start() {
-        guard active, timer == nil else { return }
-        check()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.check() }
+    private var batteryDeadline: Date? { defaults.object(forKey: "batterySyncDue") as? Date }
+
+    private func setBatteryDeadline() {
+        if active, power == .battery, let interval = batteryPolicy.interval {
+            defaults.set(clock().addingTimeInterval(interval), forKey: "batterySyncDue")
+        } else {
+            defaults.removeObject(forKey: "batterySyncDue")
         }
     }
 
+    func start() {
+        guard !started else { return }
+        started = true
+        var token: Int32 = 0
+        if notify_register_dispatch(kIOPSNotifyPowerSource, &token, .main, { [weak self] _ in
+            MainActor.assumeIsolated { self?.powerNotification() }
+        }) == NOTIFY_STATUS_OK { powerToken = token }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
+                object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.evaluate() }
+        }
+        evaluate()
+    }
+
     func stop() {
+        started = false
         timer?.invalidate()
         timer = nil
+        if let token = powerToken { notify_cancel(token); powerToken = nil }
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver); self.wakeObserver = nil }
         generation += 1
         preparation = nil
+        retryWhenIdle = false
         bindings = nil
         events.stop()
         if let process, process.isRunning { process.interrupt() }
+    }
+
+    private func cancelAutomatic() {
+        retryWhenIdle = false
+        guard !workIsManual, preparation != nil || process != nil else { return }
+        generation += 1
+        preparation = nil
+        if let process, process.isRunning { process.interrupt() }
+    }
+
+    // Ignore duplicate IOKit notifications so they cannot accelerate the AC timer.
+    private func powerNotification() {
+        guard started, readPower() != power else { return }
+        evaluate()
+    }
+
+    func evaluate(retryIfBusy: Bool = false) {
+        guard started else { return }
+        let next = readPower()
+        let pluggedIn = next == .external && next != power
+        if next != power {
+            if next != .external { cancelAutomatic() }
+            power = next
+            setBatteryDeadline()
+        }
+        if power == .external, batteryDeadline != nil { setBatteryDeadline() }
+        let now = clock()
+        if active, power == .battery, let interval = batteryPolicy.interval,
+           batteryDeadline.map({ $0.timeIntervalSince(now) > interval }) ?? true {
+            setBatteryDeadline()
+        }
+        let due = power == .external || (power == .battery && batteryPolicy.interval != nil && batteryDeadline.map { $0 <= now } == true)
+        if active && due {
+            if process == nil && preparation == nil {
+                if power == .battery { setBatteryDeadline() }
+                check()
+            } else if pluggedIn || retryIfBusy || power == .battery {
+                retryWhenIdle = true
+            }
+        }
+        timer?.invalidate()
+        timer = nil
+        guard active else { return }
+        var delay: TimeInterval?
+        if power == .external { delay = 60 }
+        if power == .battery, let due = batteryDeadline, batteryPolicy.interval != nil {
+            let remaining = due.timeIntervalSince(now)
+            delay = remaining > 0 ? remaining : 60
+        }
+        if powerToken == nil || power == .unknown { delay = min(delay ?? 60, 60) }
+        if let delay {
+            let nextTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.evaluate() }
+            }
+            nextTimer.tolerance = min(10, delay / 10)
+            timer = nextTimer
+        }
     }
 
     func toggle() {
@@ -69,6 +193,7 @@ final class Schedule: ObservableObject {
 
     private func check(manual: Bool = false) {
         guard (active || manual), process == nil, preparation == nil else { return }
+        workIsManual = manual
         let ticket = UUID()
         preparation = ticket
         let current = generation
@@ -95,7 +220,10 @@ final class Schedule: ObservableObject {
     }
 
     private func launch(manual: Bool, generation current: Int, observed: Bool) {
-        guard let binary = Bundle.main.url(forResource: "kdrive-agent", withExtension: nil) else {
+        guard current == generation else { return }
+        if !manual && readPower() != power { evaluate(); return }
+        guard manual || active && (power == .external || power == .battery && batteryPolicy.interval != nil) else { return }
+        guard let binary = agent else {
             error = "应用包缺少 kdrive-agent。"
             return
         }
@@ -134,6 +262,12 @@ final class Schedule: ObservableObject {
                 guard let self, self.process === p else { return }
                 self.process = nil
                 self.running = false
+                defer {
+                    if self.retryWhenIdle {
+                        self.retryWhenIdle = false
+                        self.evaluate()
+                    }
+                }
                 guard self.generation == current, p.terminationReason == .exit else { return }
                 if let result {
                     self.events.acknowledge(result.checked, versions: pass.versions)
@@ -175,12 +309,14 @@ struct ScheduleSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var enabled: Bool
     @State private var small: Bool
+    @State private var battery: BatterySyncPolicy
     @State private var home: String
     @State private var interface: String
 
     init(_ s: Schedule) {
         scheduler = s
         _enabled = State(initialValue: s.active)
+        _battery = State(initialValue: s.batteryPolicy)
         _small = State(initialValue: s.defaults.bool(forKey: "awaySmall"))
         _home = State(initialValue: s.defaults.string(forKey: "homeURL") ?? "")
         _interface = State(initialValue: s.defaults.string(forKey: "homeInterface") ?? "")
@@ -189,7 +325,11 @@ struct ScheduleSettings: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("自动同步").font(.title2.bold())
             Toggle("自动备份有变化的来源", isOn: $enabled)
-            Text("本机目录按文件变化检查，每天复查一次。").font(.caption)
+            Text("接入电源时按来源设置检查，未变化的本机目录每天复查一次。").font(.caption)
+            Picker("使用电池时", selection: $battery) {
+                ForEach(BatterySyncPolicy.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            Text("使用电池时仍可立即检查或上传待传输任务。").font(.caption)
             Group {
                 TextField("家庭 NAS 的 HTTPS 地址", text: $home)
                 TextField("家庭物理网卡，例如 en0", text: $interface)
@@ -202,7 +342,7 @@ struct ScheduleSettings: View {
                 Button("取消") { dismiss() }
                 Button("保存") {
                     scheduler.apply(enabled: enabled, url: home.trimmingCharacters(in: .whitespacesAndNewlines),
-                                    interface: interface.trimmingCharacters(in: .whitespacesAndNewlines), small: small)
+                                    interface: interface.trimmingCharacters(in: .whitespacesAndNewlines), small: small, battery: battery)
                     dismiss()
                 }.disabled(enabled && (home.isEmpty != interface.isEmpty)).keyboardShortcut(.defaultAction)
             }

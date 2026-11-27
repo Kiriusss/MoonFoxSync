@@ -17,10 +17,10 @@ import (
 	"time"
 )
 
-const Version = "0.4.6"
+const Version = "0.4.12"
 
 func Run(args []string, out io.Writer) error {
-	usage := "梦枢天罗 · 心狐同步 NAS 服务端\nkdrive-server init|serve|unit add|unit grant|unit allow-delete|unit disallow-delete|pair issue|device revoke --config <file>\n"
+	usage := "梦枢天罗 · 心狐同步 NAS 服务端\nkdrive-server init|serve|unit add|unit grant|unit allow-delete|unit disallow-delete|timeline collapse-redundant|pair issue|device revoke --config <file>\n"
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
 		fmt.Fprint(out, usage)
 		return nil
@@ -32,7 +32,7 @@ func Run(args []string, out io.Writer) error {
 	command := args[0]
 	args = args[1:]
 	switch command {
-	case "unit", "pair", "device":
+	case "unit", "pair", "device", "timeline":
 		if len(args) == 0 {
 			return errors.New(usage)
 		}
@@ -47,6 +47,10 @@ func Run(args []string, out io.Writer) error {
 	role := fs.String("role", "reader", "reader or sync")
 	id := fs.String("id", "", "unit or device id")
 	unit := fs.String("unit", "", "unit id")
+	head := fs.String("head", "", "expected current head")
+	keep := fs.String("keep", "", "surviving first-parent snapshot")
+	remove := fs.String("remove", "", "comma-separated snapshot IDs, newest first")
+	apply := fs.Bool("apply", false, "apply a verified head collapse")
 	device := fs.String("device", "", "device id")
 	// The documented positional id form is accepted in addition to --id.
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -66,7 +70,7 @@ func Run(args []string, out io.Writer) error {
 	if command == "init" {
 		return Init(c.DataDir)
 	}
-	s, e := Open(c.DataDir)
+	s, e := openStore(c.DataDir, command != "timeline collapse-redundant")
 	if e != nil {
 		return e
 	}
@@ -91,6 +95,12 @@ func Run(args []string, out io.Writer) error {
 			return e
 		}
 		return json.NewEncoder(out).Encode(fields{"unitId": uid})
+	case "timeline collapse-redundant":
+		result, err := s.collapseHeads(context.Background(), *unit, *head, *keep, strings.Split(*remove, ","), *apply)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(result)
 	case "pair issue":
 		v, e := s.Issue(*unit, *role)
 		if e != nil {

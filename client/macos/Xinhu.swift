@@ -206,7 +206,7 @@ struct ReadingRoom: View {
             HStack(spacing: 10) {
                 stat("资料库", model.connection.paired && !model.reachable && model.libraries.isEmpty ? "—" : "\(model.libraries.count)", "square.stack.3d.up", .libraries)
                 stat("待上传", "\(model.pendingCount)", "arrow.up.to.line", .queue)
-                stat("自动同步", scheduler.running ? "检查中" : scheduler.active ? "已开启" : "已暂停", "arrow.triangle.2.circlepath", .settings)
+                stat("自动同步", scheduler.running ? "检查中" : scheduler.active && scheduler.power == .external ? "已开启" : scheduler.status, "arrow.triangle.2.circlepath", .settings)
             }
             if let transfer = model.transfers.first {
                 Button { shell.page = .queue } label: {

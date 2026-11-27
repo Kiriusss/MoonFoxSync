@@ -109,3 +109,29 @@ func TestCodexPresetLifecycle(t *testing.T) {
 		t.Fatal("explicit backup", cfg, err)
 	}
 }
+
+func TestInterruptedScanReleasesOnlyItsOwnReservation(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	b, err := f.s.binding(ctx, f.unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := f.s.scanDue(ctx, b, AutoPolicy{})
+	if err != nil || claim == "" {
+		t.Fatal(claim, err)
+	}
+	if err := f.s.releaseScan(ctx, b.Unit, claim); err != nil {
+		t.Fatal(err)
+	}
+	next, err := f.s.scanDue(ctx, b, AutoPolicy{})
+	if err != nil || next == "" || next == claim {
+		t.Fatal(next, err)
+	}
+	if err := f.s.releaseScan(ctx, b.Unit, claim); err != nil {
+		t.Fatal(err)
+	}
+	if third, err := f.s.scanDue(ctx, b, AutoPolicy{}); err != nil || third != "" {
+		t.Fatalf("a stale cancellation reopened another worker's interval: %q, %v", third, err)
+	}
+}

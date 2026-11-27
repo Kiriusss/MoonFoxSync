@@ -58,37 +58,58 @@ func (s *Store) SetSchedule(ctx context.Context, unit, policy string, minutes in
 
 // Reserve the scan before touching the filesystem so concurrent resident processes
 // share one interval. Failed captures will be retried at the next interval.
-func (s *Store) scanDue(ctx context.Context, b Binding, p AutoPolicy) (bool, error) {
+func (s *Store) scanDue(ctx context.Context, b Binding, p AutoPolicy) (string, error) {
 	cfg, e := s.Schedule(ctx, b.Unit)
 	if e != nil {
-		return false, e
+		return "", e
 	}
 	now := time.Now().Unix()
 	if cfg.Policy == "manual" || (cfg.lastScan <= now && now-cfg.lastScan < int64(cfg.Minutes)*60) {
-		return false, nil
+		return "", nil
 	}
 	if cfg.Policy == "home" {
 		if p.HomeURL == "" {
-			return false, nil
+			return "", nil
 		}
 		if _, e = s.homeRemote(ctx, p); e != nil {
 			if errors.Is(e, ErrWaiting) {
-				return false, nil
+				return "", nil
 			}
-			return false, e
+			return "", e
 		}
 	}
-	_, e = s.db.ExecContext(ctx, "INSERT OR IGNORE INTO schedules(unit,policy,minutes) VALUES(?,?,?)", b.Unit, cfg.Policy, cfg.Minutes)
+	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
-		return false, e
+		return "", e
 	}
-	rr, e := s.db.ExecContext(ctx, "UPDATE schedules SET last_scan=? WHERE unit=? AND last_scan=? AND minutes=? AND policy=?", now, b.Unit, cfg.lastScan, cfg.Minutes, cfg.Policy)
+	defer tx.Rollback()
+	_, e = tx.ExecContext(ctx, "INSERT OR IGNORE INTO schedules(unit,policy,minutes) VALUES(?,?,?)", b.Unit, cfg.Policy, cfg.Minutes)
 	if e != nil {
-		return false, e
+		return "", e
+	}
+	rr, e := tx.ExecContext(ctx, "UPDATE schedules SET last_scan=? WHERE unit=? AND last_scan=? AND minutes=? AND policy=?", now, b.Unit, cfg.lastScan, cfg.Minutes, cfg.Policy)
+	if e != nil {
+		return "", e
 	}
 	n, e := rr.RowsAffected()
-	return n == 1, e
+	if e != nil || n != 1 {
+		return "", e
+	}
+	token := newID()
+	_, e = tx.ExecContext(ctx, "INSERT INTO scan_claims(unit,token) VALUES(?,?) ON CONFLICT(unit) DO UPDATE SET token=excluded.token", b.Unit, token)
+	if e != nil {
+		return "", e
+	}
+	return token, tx.Commit()
 }
+
+// An interrupted pass should be eligible again as soon as the machine is
+// plugged in. A superseded worker must never clear another worker's interval.
+func (s *Store) releaseScan(ctx context.Context, unit, token string) error {
+	_, e := s.db.ExecContext(ctx, "UPDATE schedules SET last_scan=0 WHERE unit=? AND EXISTS(SELECT 1 FROM scan_claims WHERE unit=? AND token=?)", unit, unit, token)
+	return e
+}
+
 func (s *Store) CaptureDue(ctx context.Context, b Binding, p AutoPolicy) (*Snapshot, error) {
 	v, _, err := s.CaptureScheduled(ctx, b, p)
 	return v, err
@@ -112,11 +133,16 @@ func (s *Store) CaptureScheduled(ctx context.Context, b Binding, p AutoPolicy) (
 			return nil, false, e
 		}
 	}
-	due, e := s.scanDue(ctx, b, p)
-	if e != nil || !due {
+	claim, e := s.scanDue(ctx, b, p)
+	if e != nil || claim == "" {
 		return nil, false, e
 	}
 	v, e := s.captureSnapshot(ctx, b.Unit, "", true)
+	if e != nil && ctx.Err() != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 4*time.Second)
+		defer cancel()
+		return nil, false, errors.Join(e, s.releaseScan(cleanup, b.Unit, claim))
+	}
 	if errors.Is(e, errLocalFilesDeleted) {
 		return nil, false, nil
 	}

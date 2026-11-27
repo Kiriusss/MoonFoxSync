@@ -59,9 +59,6 @@ internal sealed partial class WindowsShell : ApplicationContext
     }
     async Task ReadProjects(bool upstream)
     {
-        // Show the local/cached picture before a fetch across many repositories.
-        if (upstream && !haveProjectList)
-            await RefreshProjects(false);
         if (quitting)
             return;
         long request = ++generation;
@@ -75,7 +72,7 @@ internal sealed partial class WindowsShell : ApplicationContext
             {
                 // Another action changed the bindings while the fetch was running.
                 // The Go core now has fresh Git data. Re-read the current bindings.
-                if (upstream)
+                if (upstream && PowerSchedule.Current() == ComputerPower.External && (window.Visible || panel.Visible))
                     await RefreshProjects(false);
                 return;
             }
@@ -114,7 +111,9 @@ internal sealed partial class WindowsShell : ApplicationContext
     RegisteredWaitHandle activation;
     SchedulePolicy policy = new SchedulePolicy();
     Process agent;
-    bool checking, quitting;
+    bool checking, automaticCheck, checkWhenIdle, quitting;
+    ComputerPower power = PowerSchedule.Current();
+    DateTime? lastBatteryCheck;
     Task queueRead;
     int policyRevision;
     string error = "";
@@ -149,6 +148,18 @@ internal sealed partial class WindowsShell : ApplicationContext
             return policy.Adapter;
         }
     }
+    public int BatteryMinutes { get { return policy.BatteryMinutes; } }
+    public string AutomaticStatus
+    {
+        get {
+            if (!policy.Enabled) return "已暂停";
+            if (power == ComputerPower.External) return "接电 · 已启用";
+            if (power == ComputerPower.Unknown) return "电源未知 · 仅手动";
+            string source = "电池";
+            return source + (policy.BatteryMinutes == 0 ? " · 仅手动" :
+                             policy.BatteryMinutes == 60 ? " · 每小时" : " · 每四小时");
+        }
+    }
     public DateTime? LastChecked { get; private set; }
     public int Queued { get; private set; }
     public string Connection { get; private set; }
@@ -178,7 +189,7 @@ internal sealed partial class WindowsShell : ApplicationContext
                 return "正在检查绑定来源与队列";
             if (error.Length != 0)
                 return error;
-            return policy.Enabled ? "自动检查已启用" : "自动检查已暂停";
+            return "自动检查 · " + AutomaticStatus;
         }
     }
 
@@ -244,6 +255,7 @@ internal sealed partial class WindowsShell : ApplicationContext
         try
         {
             policy = ResidentSettings.ReadPolicy();
+            lastBatteryCheck = ResidentSettings.ReadBatteryTime();
             ResidentSettings.InitializeLogin();
         }
         catch (Exception ex)
@@ -285,6 +297,7 @@ internal sealed partial class WindowsShell : ApplicationContext
             if (e.Button == MouseButtons.Left)
             {
                 panel.ShowAt(Cursor.Position);
+                RequestProjects();
                 RefreshQueue();
             }
         };
@@ -292,12 +305,10 @@ internal sealed partial class WindowsShell : ApplicationContext
         {
             RefreshQueue();
         };
-        timer.Tick += async delegate
-        {
-            var activity = RefreshProjects(true);
-            if (policy.Enabled)
-                await CheckNow();
-            await activity;
+        timer.Tick += async delegate {
+            var scan = AutomaticTick(false);
+            await RefreshVisibleProjects();
+            await scan;
         };
         activation = ThreadPool.RegisterWaitForSingleObject(signal, delegate {
             try
@@ -316,13 +327,57 @@ internal sealed partial class WindowsShell : ApplicationContext
                 ShowWindow(null);
             Notify();
             timer.Start();
-            var activity = RefreshProjects(true);
-            if (policy.Enabled)
-                await CheckNow();
-            else
-                RefreshQueue();
-            await activity;
+            RefreshQueue();
+            var scan = AutomaticTick(false);
+            await RefreshVisibleProjects();
+            await scan;
         });
+    }
+
+    void RecordBatteryTime(DateTime? now)
+    {
+        lastBatteryCheck = now;
+        try { ResidentSettings.WriteBatteryTime(now); }
+        catch (System.UnauthorizedAccessException ex) { error = ex.Message; }
+        catch (System.Security.SecurityException ex) { error = ex.Message; }
+        catch (IOException ex) { error = ex.Message; }
+    }
+
+    public async void PowerChanged()
+    {
+        if (!quitting && timer.Enabled) await AutomaticTick(true);
+    }
+
+    async Task AutomaticTick(bool powerEvent)
+    {
+        if (quitting) return;
+        ComputerPower previous = power;
+        power = PowerSchedule.Current();
+        bool changed = power != previous;
+        DateTime now = DateTime.UtcNow;
+        DateTime? planned = PowerSchedule.BatteryStart(power, policy.Enabled ? policy.BatteryMinutes : 0,
+                                                       changed, lastBatteryCheck, now);
+        if (planned != lastBatteryCheck) RecordBatteryTime(planned);
+        if (changed && power == ComputerPower.External && checking && policy.Enabled) checkWhenIdle = true;
+        if (changed) {
+            if (power != ComputerPower.External && automaticCheck) {
+                policyRevision++;
+                StopAgent();
+            }
+            Notify();
+        }
+        if ((powerEvent && !changed) || checking || !policy.Enabled ||
+            !PowerSchedule.Due(power, policy.BatteryMinutes, lastBatteryCheck, now)) return;
+        if (power != ComputerPower.External) RecordBatteryTime(now);
+        await Check(true);
+    }
+
+    async Task RefreshVisibleProjects()
+    {
+        if (power != ComputerPower.External || (!window.Visible && !panel.Visible)) return;
+        if (!haveProjectList) await RefreshProjects(false);
+        if (!quitting && PowerSchedule.Current() == ComputerPower.External && (window.Visible || panel.Visible))
+            await RefreshProjects(true);
     }
 
     public void PublishState(string connection, int queued)
@@ -345,6 +400,7 @@ internal sealed partial class WindowsShell : ApplicationContext
             window.WindowState = FormWindowState.Normal;
         window.Activate();
         window.BringToFront();
+        RequestProjects();
         if (page != null)
             window.ShowSection(page);
     }
@@ -353,7 +409,7 @@ internal sealed partial class WindowsShell : ApplicationContext
     {
         try
         {
-            Configure(!policy.Enabled, policy.Url, policy.Adapter, policy.Small);
+            Configure(!policy.Enabled, policy.Url, policy.Adapter, policy.Small, policy.BatteryMinutes);
         }
         catch (Exception ex)
         {
@@ -362,21 +418,25 @@ internal sealed partial class WindowsShell : ApplicationContext
         }
     }
 
-    public void Configure(bool enabled, string url, string adapter, bool small)
+    public void Configure(bool enabled, string url, string adapter, bool small, int batteryMinutes)
     {
-        var candidate = SchedulePolicy.Create(enabled, url, adapter, small);
+        var candidate = SchedulePolicy.Create(enabled, url, adapter, small, batteryMinutes);
         ResidentSettings.WritePolicy(candidate);
         bool changed = policy.Enabled != candidate.Enabled || policy.Small != candidate.Small ||
-                       policy.Url != candidate.Url || policy.Adapter != candidate.Adapter;
+                       policy.Url != candidate.Url || policy.Adapter != candidate.Adapter ||
+                       policy.BatteryMinutes != candidate.BatteryMinutes;
+        DateTime? planned = PowerSchedule.BatteryStart(power, candidate.Enabled ? candidate.BatteryMinutes : 0,
+            !policy.Enabled || policy.BatteryMinutes != candidate.BatteryMinutes, lastBatteryCheck, DateTime.UtcNow);
+        if (planned != lastBatteryCheck) RecordBatteryTime(planned);
         policy = candidate;
         if (!changed)
             return;
         policyRevision++;
-        StopAgent();
+        if (automaticCheck) StopAgent();
         error = "";
         Notify();
         if (candidate.Enabled && !Busy)
-            window.BeginInvoke((Action)async delegate { await CheckNow(); });
+            window.BeginInvoke((Action)async delegate { await AutomaticTick(false); });
     }
 
     void UpdateTray()
@@ -443,11 +503,14 @@ internal sealed partial class WindowsShell : ApplicationContext
         return tail.ToString().Trim();
     }
 
-    public async Task CheckNow()
+    public Task CheckNow() { return Check(false); }
+
+    async Task Check(bool automatic)
     {
         if (checking || quitting)
             return;
         checking = true;
+        automaticCheck = automatic;
         int revision = policyRevision;
         error = "";
         Notify();
@@ -458,6 +521,7 @@ internal sealed partial class WindowsShell : ApplicationContext
                 new ProcessStartInfo(exe, String.Join(" ", policy.AgentArguments().Select(Bridge.Quote))) {
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     StandardOutputEncoding = Encoding.UTF8,
@@ -482,6 +546,7 @@ internal sealed partial class WindowsShell : ApplicationContext
         finally
         {
             agent = null;
+            automaticCheck = false;
             checking = false;
             if (!quitting)
             {
@@ -489,8 +554,10 @@ internal sealed partial class WindowsShell : ApplicationContext
                     LastChecked = DateTime.Now;
                 Notify();
                 RefreshQueue();
-                if (revision != policyRevision && policy.Enabled)
-                    window.BeginInvoke((Action)async delegate { await CheckNow(); });
+                bool retry = checkWhenIdle || revision != policyRevision;
+                checkWhenIdle = false;
+                if (retry && policy.Enabled)
+                    window.BeginInvoke((Action)async delegate { await AutomaticTick(false); });
             }
         }
     }
@@ -502,15 +569,12 @@ internal sealed partial class WindowsShell : ApplicationContext
         try
         {
             if (!agent.HasExited)
-                agent.Kill();
+                agent.StandardInput.Close();
         }
         catch (InvalidOperationException)
         {
         }
-        catch (System.ComponentModel.Win32Exception ex)
-        {
-            error = ex.Message;
-        }
+        catch (IOException) { /* The agent has already closed its input. */ }
     }
 
     public void Quit()

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"os"
-	"slices"
 
 	"kirius.local/kiriusdrive/internal/objectfmt"
 )
@@ -30,58 +29,18 @@ func (s *Store) unchangedCapture(ctx context.Context, binding Binding, old Snaps
 	if restoredRoot != "" {
 		base = restoredRoot
 	}
-	return sameScheduledTree(ctx, base, root, binding.Profile == "project", s.readSpoolBytes)
-}
-
-// Descend only into directories with different tree IDs. A scheduled capture
-// follows names, bytes, execute permissions, empty directories and link targets.
-// Filesystem timestamps and Finder's per-folder presentation metadata travel
-// with the next real change. A file explicitly bound on its own is always data.
-func sameScheduledTree(ctx context.Context, previous, current string, skipFinder bool, load objectfmt.Load) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
+	var missingBaseline bool
+	loadPrevious := func(ref objectfmt.Ref) ([]byte, error) {
+		raw, err := s.readSpoolBytes(ref)
+		missingBaseline = errors.Is(err, os.ErrNotExist)
+		return raw, err
 	}
-	if previous == current {
-		return true, nil
-	}
-	before, err := objectfmt.ReadDir(previous, load)
-	if errors.Is(err, os.ErrNotExist) {
-		// A remote checkout need not have a local copy of the historical tree.
-		// Without a baseline, keep the capture instead of dismissing a change.
+	same, err := objectfmt.SameTreeContents(ctx, base, root, binding.Profile == "project", loadPrevious, s.readSpoolBytes)
+	if missingBaseline && errors.Is(err, os.ErrNotExist) {
+		// A remote checkout need not have the historical tree in its local spool.
 		return false, nil
 	}
-	if err != nil {
-		return false, err
-	}
-	after, err := objectfmt.ReadDir(current, load)
-	if err != nil {
-		return false, err
-	}
-	if skipFinder {
-		finderMetadata := func(e objectfmt.Entry) bool { return e.Name == ".DS_Store" && e.Kind == "file" }
-		before = slices.DeleteFunc(before, finderMetadata)
-		after = slices.DeleteFunc(after, finderMetadata)
-	}
-	if len(before) != len(after) {
-		return false, nil
-	}
-	for i, a := range before {
-		b := after[i]
-		if a.Name != b.Name || a.Kind != b.Kind || a.Executable != b.Executable || a.Target != b.Target {
-			return false, nil
-		}
-		if a.Digest == b.Digest {
-			continue
-		}
-		if a.Kind != "directory" {
-			return false, nil
-		}
-		same, err := sameScheduledTree(ctx, a.Digest, b.Digest, skipFinder, load)
-		if err != nil || !same {
-			return false, err
-		}
-	}
-	return true, nil
+	return same, err
 }
 
 // Retire speculative objects through the same reference-checked sweep as

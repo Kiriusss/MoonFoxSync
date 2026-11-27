@@ -101,6 +101,7 @@ func Open(home string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS local_deleted_sources(unit TEXT PRIMARY KEY REFERENCES bindings(unit),generation TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS local_delete_intents(unit TEXT PRIMARY KEY REFERENCES bindings(unit),generation TEXT NOT NULL,intent BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS schedules(unit TEXT PRIMARY KEY REFERENCES bindings(unit),policy TEXT NOT NULL,minutes INTEGER NOT NULL,last_scan INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS scan_claims(unit TEXT PRIMARY KEY REFERENCES bindings(unit) ON DELETE CASCADE, token TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS codex_preset(id INTEGER PRIMARY KEY CHECK(id=1),unit TEXT NOT NULL REFERENCES bindings(unit),scope TEXT NOT NULL,enabled INTEGER NOT NULL,last_error TEXT NOT NULL DEFAULT '');
  CREATE TABLE IF NOT EXISTS reassociations(path TEXT PRIMARY KEY,previous TEXT NOT NULL,target TEXT NOT NULL,confirmed TEXT NOT NULL,generation TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS checkout_journal(unit TEXT NOT NULL,path TEXT PRIMARY KEY,prior TEXT NOT NULL,marker TEXT NOT NULL,local_root TEXT NOT NULL,record BLOB NOT NULL);

@@ -14,11 +14,14 @@ namespace XinhuSync
         public string Url { get; set; }
         public string Adapter { get; set; }
         public bool Small { get; set; }
+        public int BatteryMinutes { get; set; }
 
         public SchedulePolicy() { Url = ""; Adapter = ""; }
 
-        public static SchedulePolicy Create(bool enabled, string url, string adapter, bool small)
+        public static SchedulePolicy Create(bool enabled, string url, string adapter, bool small, int batteryMinutes)
         {
+            if (batteryMinutes != 0 && batteryMinutes != 60 && batteryMinutes != 240)
+                throw new ArgumentException("电池模式请选仅手动、每小时或每四小时。");
             url = (url ?? "").Trim();
             adapter = (adapter ?? "").Trim();
             if ((url.Length == 0) != (adapter.Length == 0))
@@ -34,7 +37,7 @@ namespace XinhuSync
                     throw new ArgumentException("家庭 NAS 需要使用带端口或默认端口的 HTTPS 私网 IPv4 地址。");
                 url = uri.GetLeftPart(UriPartial.Authority);
             }
-            return new SchedulePolicy { Enabled = enabled, Url = url, Adapter = adapter, Small = small };
+            return new SchedulePolicy { Enabled = enabled, Url = url, Adapter = adapter, Small = small, BatteryMinutes = batteryMinutes };
         }
 
         static bool PrivateV4(IPAddress ip)
@@ -52,7 +55,7 @@ namespace XinhuSync
 
         public string[] AgentArguments()
         {
-            var args = new List<string> { "--once" };
+            var args = new List<string> { "--once", "--cancel-on-stdin-close" };
             AppendHomeRoute(args);
             if (Small) args.Add("--away-small");
             return args.ToArray();
@@ -73,7 +76,7 @@ namespace XinhuSync
                 string raw = key == null ? null : key.GetValue("Schedule") as string;
                 if (String.IsNullOrEmpty(raw)) return new SchedulePolicy();
                 var policy = new JavaScriptSerializer().Deserialize<SchedulePolicy>(raw);
-                return SchedulePolicy.Create(policy.Enabled, policy.Url, policy.Adapter, policy.Small);
+                return SchedulePolicy.Create(policy.Enabled, policy.Url, policy.Adapter, policy.Small, policy.BatteryMinutes);
             }
         }
 
@@ -81,6 +84,25 @@ namespace XinhuSync
         {
             using (var key = Registry.CurrentUser.CreateSubKey(AppKey))
                 key.SetValue("Schedule", new JavaScriptSerializer().Serialize(policy));
+        }
+
+        public static DateTime? ReadBatteryTime()
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(AppKey))
+            {
+                object stored = key == null ? null : key.GetValue("LastBatteryCheckUtc");
+                if (!(stored is long)) return null;
+                long ticks = (long)stored;
+                if (ticks <= 0 || ticks > DateTime.MaxValue.Ticks) return null;
+                return new DateTime(ticks, DateTimeKind.Utc);
+            }
+        }
+
+        public static void WriteBatteryTime(DateTime? time)
+        {
+            using (var key = Registry.CurrentUser.CreateSubKey(AppKey))
+                if (time.HasValue) key.SetValue("LastBatteryCheckUtc", time.Value.Ticks, RegistryValueKind.QWord);
+                else key.DeleteValue("LastBatteryCheckUtc", false);
         }
 
         static string Command { get { return Bridge.Quote(Application.ExecutablePath) + " --background"; } }

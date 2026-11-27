@@ -101,7 +101,8 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
         scheduler.start()
         projectsTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats:true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.panel.isShown || self.mainWindow?.occlusionState.contains(.visible) == true else { return }
+                guard let self, self.scheduler.power == .external,
+                      self.panel.isShown || self.mainWindow?.occlusionState.contains(.visible) == true else { return }
                 try? await self.model.refreshJobs()
                 self.model.refreshProjects(remoteGit: true)
             }
@@ -116,7 +117,7 @@ final class DesktopShell: NSObject, ObservableObject, NSApplicationDelegate, NSW
                 UserDefaults.standard.set(true, forKey: "loginConfigured")
             }
         }
-        if silent { refreshModel() } else { openMain() }
+        if !silent { openMain() }
     }
 
     private func startTransferMonitor() {
@@ -395,8 +396,8 @@ private struct QuickPanel: View {
                 }
             }
             HStack(spacing: 8) {
-                Circle().fill(schedule.running ? .blue : schedule.active ? .green : .secondary).frame(width: 7, height: 7)
-                Text(schedule.running ? "正在检查同步" : schedule.active ? "自动同步已开启" : "自动同步已暂停")
+                Circle().fill(schedule.running ? .blue : schedule.active && schedule.power == .external ? .green : .secondary).frame(width: 7, height: 7)
+                Text(schedule.running ? "正在检查同步" : schedule.status)
                     .font(.subheadline)
                 Spacer()
                 Button(schedule.active ? "暂停" : "启用") { schedule.toggle() }.controlSize(.small)

@@ -55,6 +55,11 @@ type testPoint struct {
 }
 
 func (f timelineFixture) add(parent, body, want string) testPoint {
+	f.t.Helper()
+	return f.addDraft(parent, body, want, nil)
+}
+
+func (f timelineFixture) addDraft(parent, body, want string, edit func(*draft, objectfmt.Store)) testPoint {
 	t := f.t
 	t.Helper()
 	id := newID()
@@ -73,6 +78,9 @@ func (f timelineFixture) add(parent, body, want string) testPoint {
 		t.Fatal(err)
 	}
 	d := draft{RequestID: newID(), ID: id, Parent: p, Base: p, Root: root, Captured: stamp(time.Now().Add(-30 * 24 * time.Hour)), Revision: 1, Label: "test", Links: []json.RawMessage{}, Attachments: []asset{{"git-bundle", "git.bundle", file}}}
+	if edit != nil {
+		edit(&d, save)
+	}
 	b, _ := f.request("POST", f.path+"/uploads", f.writer, d, 201)
 	session := "/uploads/" + parse(t, b)["uploadId"].(string)
 	var offer []fields

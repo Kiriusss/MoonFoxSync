@@ -583,6 +583,12 @@ func (s *Store) finalize(w http.ResponseWriter, r *http.Request, dev string) err
 	}
 	outcome := "fork"
 	advance := same(head, d.Base)
+	if !advance && head != nil && d.Base != nil {
+		advance, e = collapsedBaseMatches(r.Context(), tx, a.unit, *d.Base, *head)
+		if e != nil {
+			return e
+		}
+	}
 	if advance {
 		advance, e = s.mayAdvanceShared(r.Context(), tx, a.unit, dev, d)
 		if e != nil {
